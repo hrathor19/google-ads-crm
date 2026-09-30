@@ -22,6 +22,24 @@ import {
 } from '@/lib/ops/metrics';
 
 const ALL = { accountIds: null };
+
+/**
+ * How many days back from the latest fully-synced day to compare.
+ *
+ * Defaults to the 30-day window the dashboards show. Widen it with
+ * `--days=500` to check the backfilled history, where a porting mistake in an
+ * older month would never surface in a 30-day check.
+ */
+const DAYS = (() => {
+  const raw = process.argv.find((a) => a.startsWith('--days='))?.split('=')[1];
+  if (!raw) return 29;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    console.error(`--days must be a positive integer, got "${raw}".`);
+    process.exit(1);
+  }
+  return n - 1;
+})();
 const REFERENCE = process.argv.find((a) => a.startsWith('--reference='))?.split('=')[1];
 
 /** Where the Python project lives; override with --source=/path/to/it. */
@@ -47,7 +65,8 @@ function capturePythonReference(): Record<string, unknown> | null {
     console.error('--reference=<file.json> to diff against a saved capture.');
     return null;
   }
-  const out = execFileSync(venv, [script], {
+  // The window goes to both engines, so they always measure the same span.
+  const out = execFileSync(venv, [script, `--days=${DAYS}`], {
     cwd: SOURCE_DIR,
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
@@ -65,7 +84,7 @@ function near(a: unknown, b: unknown, tolerance = 0.011): boolean {
 
 async function main() {
   const refs = await resolveRefDates();
-  const start = addDays(refs.latest, -29);
+  const start = addDays(refs.latest, -DAYS);
 
   const [counts, totals, series, limited, lowQs, keywords, terms] = await Promise.all([
     entityCounts(ALL),

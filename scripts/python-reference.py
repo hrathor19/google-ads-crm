@@ -8,6 +8,7 @@ that isn't one.
 """
 
 import json
+import sys
 from datetime import timedelta
 
 from app.database.session import SessionLocal
@@ -17,7 +18,8 @@ from app.services.ops.dates import resolve_ref_dates
 db = SessionLocal()
 refs = resolve_ref_dates(db)
 ops = OpsRepository(db)
-start = refs.latest - timedelta(days=29)
+_days = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--days=")), "29")
+start = refs.latest - timedelta(days=int(_days))
 
 series = ops.daily_series(start, refs.latest, None)
 tot = {
