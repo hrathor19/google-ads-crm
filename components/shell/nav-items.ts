@@ -2,6 +2,8 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Activity,
   BarChart3,
+  BellRing,
+  ListChecks,
   ClipboardList,
   FileSearch,
   Gauge,
@@ -50,6 +52,14 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/keywords', label: 'Keywords', icon: KeyRound, requires: [['KEYWORDS', 'VIEW']] },
       { href: '/dashboard/search-terms', label: 'Search terms', icon: Search, requires: [['KEYWORDS', 'VIEW']] },
       { href: '/dashboard/segments', label: 'Devices & geo', icon: Gauge, requires: [['CAMPAIGNS', 'VIEW']] },
+      {
+        href: '/dashboard/priorities',
+        label: 'Priority queue',
+        icon: ListChecks,
+        requires: [['CAMPAIGNS', 'VIEW']],
+      },
+      { href: '/dashboard/alerts', label: 'Alerts', icon: BellRing, requires: [['DASHBOARD', 'VIEW']] },
+      { href: '/dashboard/budgets', label: 'Budgets', icon: Wallet, requires: [['FINANCIALS', 'VIEW']] },
       { href: '/dashboard/trends', label: 'Trends', icon: LineChart, requires: [['DASHBOARD', 'VIEW']] },
       { href: '/dashboard/analytics', label: 'Analytics (GA4)', icon: Activity, requires: [['ANALYTICS', 'VIEW']] },
     ],
