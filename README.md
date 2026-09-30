@@ -1,0 +1,343 @@
+# Google Ads CRM
+
+A role-based CRM over the Google Ads data that
+[`google-ads-intelligence`](../../google-ads-intelligence-main) syncs: executive
+reporting, account drill-downs, an ad-request approval workflow, AI ad copy and
+a landing-page scorer — with a permission matrix a Super Admin can change at
+runtime.
+
+Built on the [Counselling CRM](../../Counselling%20CRM) stack, reading the same
+PostgreSQL database as the Google Ads Intelligence project.
+
+---
+
+## Quick start
+
+```bash
+npm install
+cp .env.example .env     # fill in the values — see "Environment variables"
+npx prisma migrate deploy
+npm run db:seed          # 4 default roles + the Super Admin
+npm run dev              # http://localhost:3000
+```
+
+Sign in with `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`. You will be required to
+change the password before anything else opens — the seeded one is in a file on
+disk and in the shell history of whoever ran the seed.
+
+### Requirements
+
+- Node 20+
+- PostgreSQL 14+ — **the same database the Python project syncs into**
+- Google Ads API credentials (developer token, OAuth client, refresh token, MCC id)
+
+---
+
+## Architecture
+
+```
+Next.js 14 (App Router, TypeScript)
+   ├─ NextAuth v4 · credentials + JWT · bcrypt        ← Counselling CRM pattern
+   ├─ Prisma 5 ──────────────────────────►  PostgreSQL  ads_intelligence
+   │                                          ├─ 28 Google Ads tables   (read)
+   │                                          └─ 12 crm_* tables        (read/write)
+   ├─ lib/google-ads/   GAQL fetchers + sync engine → Google Ads API
+   ├─ lib/ops/          scoring rules + aggregations
+   ├─ lib/ai/           Gemini ad copy · landing-page scorer
+   ├─ lib/ga4/          Analytics Data API
+   ├─ lib/rbac/         the permission catalogue and engine
+   └─ lib/workflow/     the Ad Request state machine
+```
+
+**Why one database.** The Python project already syncs Google Ads into
+PostgreSQL. Pointing this app at the same tables makes metric parity a matter
+of reading identical rows rather than re-deriving them, and it is verifiable:
+`npm run parity` diffs the two engines' output on the same window. See
+[docs/PARITY.md](docs/PARITY.md).
+
+Prisma was introduced over an Alembic-owned schema by **baselining**: the
+existing tables were introspected into `prisma/schema.prisma` and marked
+applied (`0_init`), then a second migration adds only the `crm_*` tables. The
+`crm_` prefix makes ownership obvious in `psql` and keeps the two migration
+histories from ever colliding.
+
+### Layout
+
+```
+app/
+  api/**/route.ts          route handlers, one per resource
+  dashboard/**/page.tsx    authenticated pages under one shell
+  login/  change-password/
+components/
+  ui/                      shadcn primitives (copied from Counselling CRM)
+  shell/                   sidebar, top bar, navigation
+  data/                    tables, tiles, charts, panels
+  providers/               permissions + global filters
+lib/
+  ai/  ga4/  google-ads/  ops/  rbac/  workflow/
+  api.ts                   route guards and error handling
+  redact.ts                financial redaction
+prisma/                    schema, migrations, seed
+scripts/                   sync, parity, e2e, responsive checks
+tests/                     vitest suites
+```
+
+---
+
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Development server |
+| `npm run build` / `npm start` | Production build and serve |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Unit tests (parity, scoring, RBAC, workflow) |
+| `npm run e2e` | Workflow + RBAC end-to-end, over HTTP (needs the dev server up) |
+| `npm run check:responsive` | Real Chrome at 360 / 768 / 1280 px, plus accessibility checks |
+| `npm run parity` | Diff this app's aggregation against the Python app's |
+| `npm run sync` | Manual Google Ads sync |
+| `npm run db:seed` / `db:migrate` / `db:studio` | Prisma |
+
+### Syncing
+
+```bash
+npm run sync                                             # everything, 30-day lookback
+npm run sync -- --entities=campaigns --days=7            # one entity, shorter window
+npm run sync -- --customers=8104811686 --entities=keywords
+```
+
+The same code backs the **Refresh** button in the top bar. Each `(entity,
+account, run)` writes one `sync_logs` row and each snapshot window is deleted
+and re-inserted, so a re-run over an overlapping range cannot stack duplicate
+rows and inflate every sum.
+
+---
+
+## Environment variables
+
+Reused from the Google Ads Intelligence project:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | PostgreSQL. **Required.** |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | Google Ads API developer token |
+| `GOOGLE_ADS_CLIENT_ID` / `GOOGLE_ADS_CLIENT_SECRET` | OAuth client |
+| `GOOGLE_ADS_REFRESH_TOKEN` | OAuth refresh token |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID` | The MCC id |
+| `GEMINI_API_KEY` | AI ad copy. Without it the deterministic engine runs. |
+| `GEMINI_MODEL` | Defaults to `gemini-flash-lite-latest` |
+| `APP_ENV`, `APP_DEBUG`, `SCHEDULER_ENABLED` | Carried over; informational |
+| `SESSION_SECRET`, `AUTH_*`, `SMTP_*`, `BREVO_API_KEY`, `PUBLIC_BASE_URL` | Carried over from the source `.env`; not read by this app |
+
+Added by this app:
+
+| Variable | Purpose |
+|---|---|
+| `NEXTAUTH_URL` | Base URL. **Required in production.** |
+| `NEXTAUTH_SECRET` | Signs the session JWT. **Required.** |
+| `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | The Super Admin created by the seed. **Required.** |
+| `GA4_PROPERTY_ID` | GA4 property. Analytics stays "not configured" without it. |
+| `GA4_CLIENT_EMAIL` / `GA4_PRIVATE_KEY` | GA4 service account |
+| `OPS_<GROUP>__<RULE>` | Override any scoring rule, e.g. `OPS_HEALTH__CTR_FLOOR=0.03` |
+| `SYNC_MAX_RETRIES`, `SYNC_DEFAULT_LOOKBACK_DAYS` | Sync tuning |
+| `LANDING_PAGE_TIMEOUT_SECONDS`, `LANDING_PAGE_MAX_BYTES` | Scraper bounds |
+
+`assertRequiredEnv()` runs at first render and fails with a readable list, so a
+misconfigured deploy says what is missing instead of throwing a null-pointer
+three layers down.
+
+### Secrets
+
+`.env` is gitignored. Every module that touches a credential imports
+`server-only`, which makes importing it from a client component a **build
+error** rather than a code-review question. The build is checked for leaked
+secret values; no Google Ads, Gemini or database credential appears in
+`.next/static`.
+
+---
+
+## Roles and permissions
+
+### The catalogue
+
+A permission is `"<MODULE>:<ACTION>"`. Modules and their applicable actions are
+declared in one file, [`lib/rbac/features.ts`](lib/rbac/features.ts), which
+drives the matrix UI, the API guards and the seed together.
+
+14 modules × the actions each supports = 34 permissions. Notable ones:
+
+- **`FINANCIALS:VIEW`** — a permission of its own. Without it, cost, CPC,
+  cost/conversion and budgets are stripped **server-side**, so the figures
+  never reach the browser at all.
+- **`AD_REQUESTS:APPROVE`** — who can approve. Notifications are routed by
+  querying this permission, not by role name, so a custom reviewer role works
+  without a code change.
+- **`AD_COPY:GENERATE_AI`**, **`LANDING_SCORE:GENERATE_AI`** — the AI tools.
+
+### The default roles
+
+| Role | Summary |
+|---|---|
+| **Super Admin** | Bypasses every check. Cannot be deleted; its matrix is not editable because it would be ignored. |
+| **Manager** | All reporting including spend, approves ad requests, no user/role management. |
+| **Operations** | Raises and tracks requests. Reporting **without** financial data. |
+| **Google Ads Team** | Works approved requests: AI copy, landing scores, takes a request live. |
+
+Seeded roles are marked `isSystem` and cannot be deleted. A role with users
+assigned cannot be deleted either.
+
+### Custom roles
+
+A Super Admin can create, clone, edit and delete roles at
+**Administration → Roles & permissions**. Toggles save immediately; the JWT
+re-validates against the database every five minutes, so a revoked permission
+bites without anyone signing out. Every change is written to the audit log with
+its before and after value.
+
+A clone copies the source's **effective** matrix, not just its stored rows —
+a seeded role's grants mostly live in the defaults, so copying only the rows
+would produce an empty role that looked identical in the UI.
+
+### Account scoping
+
+A role or an individual user can be limited to specific Google Ads accounts.
+The user's own scope takes precedence, so pinning one account to one person
+does not require cloning a role.
+
+An empty allow-list returns **nothing**, not everything —
+`{ id: { in: [] } }`. That is the failure mode that matters, and there is a
+test for it.
+
+### Adding a permission
+
+1. Add the action to the module's `actions` in `lib/rbac/features.ts` — or add a
+   new module entry.
+2. Grant it to whichever `SEED_ROLES` should have it by default.
+3. Guard the endpoint: `await requirePermission('MODULE', 'ACTION')`.
+4. Hide the UI: `can('MODULE', 'ACTION')` or `<Can module= action=>`.
+5. `npm run db:seed` — idempotent; it adds the missing rows and never
+   overwrites a live edit.
+
+The matrix UI needs no change: it renders from `MODULES`.
+
+> Hiding a button is a courtesy. The guard is the control — no endpoint relies
+> on the UI having hidden anything.
+
+---
+
+## The Ad Request workflow
+
+```
+DRAFT ──► SUBMITTED ──┬──► APPROVED ──► IN_PROGRESS ──► READY ──► LIVE ──► COMPLETED
+   ▲                  ├──► REJECTED ──────┐
+   │                  └──► CHANGES_REQUESTED
+   └──────────────── resubmit ────────────┘
+```
+
+Every transition is declared in one table
+([`lib/workflow/ad-requests.ts`](lib/workflow/ad-requests.ts)) with the
+permission it needs, the statuses it is reachable from, and whether it demands
+a reason. `transition()` is the only way a status changes, and it writes the
+timeline event, the notifications and the audit row on the same path — so a
+status cannot move without a trace.
+
+- Rejection and "request changes" require a reason; the API refuses without one.
+- Only the person who raised a request can submit it.
+- Once approved, the brief is locked: the Ads team is building against it, and
+  a silent edit would make the approval meaningless.
+- On approval the request enters the Ads team's queue, where copy generation,
+  landing-page scoring, version history and the campaign link all live on one
+  screen.
+
+---
+
+## AI features
+
+### Ad copy
+
+Grounded generation: the brief plus the **live landing page**, with an explicit
+instruction never to invent a ranking, fee, placement figure or deadline. Output
+is validated against Google's limits — 30 characters for headlines, 90 for
+descriptions — and anything over is dropped rather than truncated, because a
+cut headline is a fragment.
+
+If no `GEMINI_API_KEY` is set, or the model fails, or it returns fewer than
+Google's minimum of three headlines and two descriptions, a **deterministic
+engine** builds copy from the same facts. Generating copy never hard-fails.
+
+Ad Strength is predicted with the source project's additive model over headline
+volume, description count, uniqueness and keyword coverage.
+
+### Landing-page scorer
+
+Fetches the page and scores it on the elements that drive ad conversions,
+weighted, with exam pages judged on exam signals and college pages on college
+signals. Tracking (GTM, GA4, Google Ads conversion, Meta Pixel, consent) and
+link hygiene are part of the score, so a page cannot reach 100% while being
+unmeasurable. Suggestions appear only for failed checks, heaviest lever first.
+
+The fetcher is SSRF-guarded: http(s) only, every resolved address checked
+against private, loopback, link-local, CGNAT and IPv4-mapped ranges, **re-checked
+at every redirect hop**, with a body size cap and a bounded link probe.
+
+---
+
+## Analytics (GA4)
+
+Built against the Analytics Data API and **gated behind credentials that do not
+exist yet**.
+
+The source project has no GA4 reporting to port — GA4 appears there only as tag
+*detection* inside the landing-page auditor, and its `.env` carries no GA4
+credentials. Rather than pretend the section exists, the module reports "not
+configured" and names the three variables to set. Supply them and the full
+report set (traffic, sources/mediums, landing pages, engagement, conversions,
+audience, devices, geography) comes to life.
+
+---
+
+## Testing
+
+```bash
+npm test                  # 76 unit tests
+npm run e2e               # 53 end-to-end checks (dev server must be running)
+npm run check:responsive  # 246 assertions in real Chrome
+npm run parity            # 27 metric comparisons against the Python app
+```
+
+- **Parity** is asserted as a *relationship*, not a frozen snapshot: the Python
+  project writes into this database and the figures move with every sync, so
+  hardcoded expectations would fail for the wrong reason. The tests pin
+  micros ÷ 1e6, CTR derived after summing, null-not-zero on a zero denominator,
+  and that every rollup sums back to the window total.
+- **E2E** drives the real HTTP API, so a guard that exists only in a component
+  cannot make it pass. It walks the whole workflow across three signed-in
+  users, then creates a custom role, toggles a permission, confirms the change
+  bites on a live session, and confirms the delete guards hold.
+- **Responsive** drives real Chrome and asserts what actually breaks on a
+  phone: horizontal overflow (naming the offending element), an unopenable
+  navigation, unlabelled inputs, unnamed icon buttons and touch targets under
+  32px.
+
+---
+
+## Deployment notes
+
+- `npm run build` runs `prisma generate` first.
+- Apply migrations with `npx prisma migrate deploy` — never `db push`, which
+  would compare the whole schema including the Alembic-owned tables.
+- Set `NEXTAUTH_URL` to the deployed origin, or callbacks resolve to localhost.
+- The sync and AI routes declare `maxDuration` (300s / 120s); a serverless host
+  needs a plan that permits it, or the sync should run from `npm run sync` on a
+  scheduler instead.
+- Security headers (`X-Frame-Options`, `X-Content-Type-Options`,
+  `Referrer-Policy`, `Permissions-Policy`) are set in `next.config.js`.
+
+---
+
+## Documentation
+
+- [docs/DISCOVERY.md](docs/DISCOVERY.md) — what both source projects contain,
+  and the gaps between the brief and what actually exists
+- [docs/PARITY.md](docs/PARITY.md) — the metric comparison, in full
