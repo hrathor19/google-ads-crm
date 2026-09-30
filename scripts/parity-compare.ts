@@ -7,7 +7,9 @@
  * next to the source project's, computed from the identical rows in the
  * identical database. Anything that differs is a real divergence, not noise.
  */
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { resolveRefDates, addDays, isoDay } from '@/lib/ops/dates';
 import {
   entityCounts,
@@ -21,6 +23,37 @@ import {
 
 const ALL = { accountIds: null };
 const REFERENCE = process.argv.find((a) => a.startsWith('--reference='))?.split('=')[1];
+
+/** Where the Python project lives; override with --source=/path/to/it. */
+const SOURCE_DIR =
+  process.argv.find((a) => a.startsWith('--source='))?.split('=')[1] ??
+  process.env.ADS_INTELLIGENCE_DIR ??
+  resolve(process.cwd(), '..', '..', 'google-ads-intelligence-main');
+
+/**
+ * Run the source project's reporting code and return its figures.
+ *
+ * Captured now, not read from a file written earlier: both engines read the
+ * same live database, so a sync between the two measurements would show up as
+ * a divergence that does not exist. (It already did once — a Refresh moved
+ * active campaigns 168 -> 171 between a saved snapshot and a comparison run.)
+ */
+function capturePythonReference(): Record<string, unknown> | null {
+  const venv = resolve(SOURCE_DIR, '.venv/bin/python');
+  const script = resolve(process.cwd(), 'scripts/python-reference.py');
+  if (!existsSync(venv)) {
+    console.error(`No Python venv at ${venv}.`);
+    console.error('Pass --source=/path/to/google-ads-intelligence-main, or');
+    console.error('--reference=<file.json> to diff against a saved capture.');
+    return null;
+  }
+  const out = execFileSync(venv, [script], {
+    cwd: SOURCE_DIR,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return JSON.parse(out) as Record<string, unknown>;
+}
 
 type Row = { metric: string; python: unknown; node: unknown; match: boolean };
 
@@ -81,45 +114,51 @@ async function main() {
     })),
   };
 
-  if (!REFERENCE) {
+  // A saved file is still accepted, but the default is a live capture.
+  const python = REFERENCE
+    ? (JSON.parse(readFileSync(REFERENCE, 'utf8')) as Record<string, unknown>)
+    : capturePythonReference();
+
+  if (!python) {
+    console.log('\nThis app only:\n');
     console.log(JSON.stringify(node, null, 2));
+    process.exitCode = 1;
     return;
   }
-
-  const python = JSON.parse(readFileSync(REFERENCE, 'utf8'));
+  const py = python as Record<string, any>;
   const rows: Row[] = [];
 
   const push = (metric: string, p: unknown, n: unknown) =>
     rows.push({ metric, python: p, node: n, match: near(p, n) });
 
-  push('window', python.window, node.window);
+  push('window', py.window, node.window);
   for (const k of Object.keys(node.counts)) {
-    push(`counts.${k}`, python.counts?.[k], (node.counts as Record<string, unknown>)[k]);
+    push(`counts.${k}`, py.counts?.[k], (node.counts as Record<string, unknown>)[k]);
   }
   for (const k of Object.keys(node.window_totals)) {
     push(
       `30d.${k}`,
-      python.window_totals?.[k],
+      py.window_totals?.[k],
       (node.window_totals as Record<string, unknown>)[k]
     );
   }
   for (const k of Object.keys(node.day_totals_latest)) {
     push(
       `latestDay.${k}`,
-      python.day_totals_latest?.[k],
+      py.day_totals_latest?.[k],
       (node.day_totals_latest as Record<string, unknown>)[k]
     );
   }
-  push('series_days', python.series_days, node.series_days);
-  push('limited_by_budget', python.limited_by_budget, node.limited_by_budget);
-  push('low_qs_keywords', python.low_qs_keywords, node.low_qs_keywords);
-  push('keyword_rows', python.keyword_rows, node.keyword_rows);
-  push('keyword_cost_sum', python.keyword_cost_sum, node.keyword_cost_sum);
-  push('search_term_total', python.search_term_total, node.search_term_total);
+  push('series_days', py.series_days, node.series_days);
+  push('limited_by_budget', py.limited_by_budget, node.limited_by_budget);
+  push('low_qs_keywords', py.low_qs_keywords, node.low_qs_keywords);
+  push('keyword_rows', py.keyword_rows, node.keyword_rows);
+  push('keyword_cost_sum', py.keyword_cost_sum, node.keyword_cost_sum);
+  push('search_term_total', py.search_term_total, node.search_term_total);
   for (let i = 0; i < 5; i++) {
     push(
       `topTerm[${i}].cost`,
-      python.search_term_top?.[i]?.cost,
+      py.search_term_top?.[i]?.cost,
       node.search_term_top[i]?.cost
     );
   }

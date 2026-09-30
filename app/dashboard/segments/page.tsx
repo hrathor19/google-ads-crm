@@ -1,6 +1,11 @@
 'use client';
 
-import { Globe, Smartphone } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { useState } from 'react';
+import { Globe, Map as MapIcon, Smartphone, Table2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/data/page-header';
 import { DataTable, type Column } from '@/components/data/data-table';
 import { metricColumns } from '@/components/data/metric-columns';
@@ -9,8 +14,18 @@ import { EmptyState, ErrorState, TableSkeleton } from '@/components/data/states'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useFilteredApi } from '@/lib/hooks/use-filtered-api';
 
+// The map pulls in d3-geo and a topojson parser; loading it on demand keeps
+// that off the initial bundle for everyone who only wants the table.
+const GeoMap = dynamic(() => import('@/components/data/geo-map').then((m) => m.GeoMap), {
+  ssr: false,
+  loading: () => <Skeleton className="h-[420px] w-full rounded-lg" />,
+});
+
 type SegmentRow = {
   segment: string;
+  /** ISO 3166-1 numeric — present on geo rows, used to join to the map. */
+  isoNumeric?: number | null;
+  criterionId?: number | null;
   impressions: number;
   clicks: number;
   cost: number | null;
@@ -21,6 +36,7 @@ type SegmentRow = {
 };
 
 export default function SegmentsPage() {
+  const [geoView, setGeoView] = useState<'map' | 'table'>('map');
   const { data, isLoading, error, refetch } = useFilteredApi<{
     devices: SegmentRow[];
     geo: SegmentRow[];
@@ -46,7 +62,7 @@ export default function SegmentsPage() {
     <>
       <PageHeader
         title="Devices & geography"
-        description="The two segment dimensions the sync captures. Geography is reported at country level, which is the granularity the Google Ads geographic view returns here."
+        description="The two segment dimensions the sync captures. Geography is reported at country level — the granularity the Google Ads geographic view returns."
       />
 
       {isLoading || !data ? (
@@ -96,16 +112,72 @@ export default function SegmentsPage() {
           </section>
 
           <section>
-            <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <Globe className="h-4 w-4 opacity-70" aria-hidden="true" />
-              Geography
-            </h2>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 text-sm font-semibold">
+                <Globe className="h-4 w-4 opacity-70" aria-hidden="true" />
+                Geography
+                <span className="font-normal text-muted-foreground">
+                  {data.geo.length} countr{data.geo.length === 1 ? 'y' : 'ies'}
+                </span>
+              </h2>
+
+              {data.geo.length > 0 && (
+                <div className="flex rounded-lg border p-0.5" role="group" aria-label="Geography view">
+                  {(
+                    [
+                      ['map', 'Map', MapIcon],
+                      ['table', 'Table', Table2],
+                    ] as const
+                  ).map(([key, label, Icon]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setGeoView(key)}
+                      aria-pressed={geoView === key}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                        geoView === key
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      )}
+                    >
+                      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {data.geo.length === 0 ? (
               <EmptyState
                 icon={Globe}
                 title="No geographic data in this window"
                 description="Run a sync covering these dates to populate the geographic view."
               />
+            ) : geoView === 'map' ? (
+              <Card>
+                <CardContent className="p-4">
+                  <GeoMap
+                    data={data.geo.map((g) => ({
+                      segment: g.segment,
+                      isoNumeric: g.isoNumeric ?? null,
+                      impressions: g.impressions,
+                      clicks: g.clicks,
+                      cost: g.cost,
+                      conversions: g.conversions,
+                      ctr: g.ctr,
+                    }))}
+                    canSeeMoney={canSeeMoney}
+                  />
+                  {data.geo.length === 1 && (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      All targeting in this window is {data.geo[0]!.segment}, so one country is
+                      shaded. The map fills out as you add markets.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             ) : (
               <DataTable
                 rows={data.geo}

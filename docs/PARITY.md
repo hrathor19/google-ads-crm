@@ -22,14 +22,21 @@ never double-count. The TypeScript sync engine reproduces that contract.
 ## Verification
 
 ```bash
-# 1. Capture the source project's figures
-cd ~/Downloads/google-ads-intelligence-main
-./.venv/bin/python -c "…"   > /tmp/python-parity.json   # see below
-
-# 2. Compare
-cd ~/Downloads/"Ads CRM"/google-ads-crm
-npm run parity -- --reference=/tmp/python-parity.json
+npm run parity
 ```
+
+One command. It runs `scripts/python-reference.py` inside the source project's
+virtualenv and diffs the result against this app's aggregation layer, **both
+measured in the same run**.
+
+That matters more than it sounds. An earlier version compared against a JSON
+snapshot captured by hand, and a Refresh between the two measurements moved
+active campaigns from 168 to 171 — the tool reported a divergence that did not
+exist. Both engines read the same live database, so the only honest comparison
+is a simultaneous one.
+
+Point it at a different checkout with `--source=/path/to/project`, or diff
+against a saved capture with `--reference=<file.json>`.
 
 ## Result — 2026-09-30, window 2026-08-31 → 2026-09-29
 

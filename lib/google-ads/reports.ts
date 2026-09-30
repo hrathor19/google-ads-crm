@@ -282,6 +282,49 @@ export async function fetchCampaignDeviceMetrics(customerId: string, start: Date
   }));
 }
 
+/**
+ * Resolve Google Ads geo criterion ids to their canonical names.
+ *
+ * The source project left `location_name` null on every geo row, so its own
+ * reports could only show the raw id. One extra query per sync fills it in.
+ * Cached per process: the geo target constants are a fixed reference table.
+ */
+const geoNameCache = new Map<number, string>();
+
+export async function fetchGeoTargetNames(
+  customerId: string,
+  criterionIds: number[]
+): Promise<Map<number, string>> {
+  const unknown = Array.from(new Set(criterionIds)).filter(
+    (id) => Number.isFinite(id) && !geoNameCache.has(id)
+  );
+
+  if (unknown.length > 0) {
+    try {
+      const rows = await search<{ geo_target_constant: Record<string, unknown> }>(
+        customerId,
+        `SELECT geo_target_constant.id, geo_target_constant.name
+         FROM geo_target_constant
+         WHERE geo_target_constant.id IN (${unknown.join(',')})`
+      );
+      for (const r of rows) {
+        const id = Number(r.geo_target_constant.id);
+        const name = r.geo_target_constant.name as string | undefined;
+        if (Number.isFinite(id) && name) geoNameCache.set(id, name);
+      }
+    } catch {
+      // A naming lookup must never fail a sync — the metrics are the point,
+      // and the read side falls back to the ISO table.
+    }
+  }
+
+  return new Map(
+    criterionIds
+      .filter((id) => geoNameCache.has(id))
+      .map((id) => [id, geoNameCache.get(id)!])
+  );
+}
+
 export async function fetchCampaignGeoMetrics(customerId: string, start: Date, end: Date) {
   const query = `
     SELECT
@@ -301,13 +344,25 @@ export async function fetchCampaignGeoMetrics(customerId: string, start: Date, e
     metrics: Record<string, unknown>;
   }>(customerId, query);
 
-  return rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     campaign_id: Number(r.campaign.id),
     snapshot_date: parseAdsDate(r.segments?.date),
     country_criterion_id: intOrNull(r.geographic_view?.country_criterion_id),
     location_name: null as string | null,
     ...metricsOf(r),
   }));
+
+  // Name the locations, so the stored rows are readable without a lookup.
+  const names = await fetchGeoTargetNames(
+    customerId,
+    mapped.map((m) => m.country_criterion_id).filter((id): id is number => id !== null)
+  );
+  for (const row of mapped) {
+    if (row.country_criterion_id !== null) {
+      row.location_name = names.get(row.country_criterion_id) ?? null;
+    }
+  }
+  return mapped;
 }
 
 // ─── Ad groups ───────────────────────────────────────────────────────────────

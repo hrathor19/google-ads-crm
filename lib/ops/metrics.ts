@@ -1,6 +1,7 @@
 import 'server-only';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { countryNameFromCriterion, isoNumericFromCriterion } from './country-codes';
 
 /**
  * Aggregate queries over the synced Google Ads snapshots.
@@ -1040,12 +1041,19 @@ export async function deviceBreakdown(
   return rows.map((r) => ({ segment: r.device, ...buildTotals(r) }));
 }
 
+export type GeoRow = SegmentRow & {
+  /** Google Ads country criterion id, e.g. 2356. */
+  criterionId: number | null;
+  /** ISO 3166-1 numeric — the id the world topojson keys its features on. */
+  isoNumeric: number | null;
+};
+
 export async function geoBreakdown(
   start: Date,
   end: Date,
   scope: Scope,
   accountId?: number | null
-): Promise<SegmentRow[]> {
+): Promise<GeoRow[]> {
   const extra =
     accountId != null ? Prisma.sql`AND account_id = ${accountId}` : Prisma.empty;
   const rows = await prisma.$queryRaw<
@@ -1072,14 +1080,22 @@ export async function geoBreakdown(
     GROUP BY country_criterion_id
     ORDER BY COALESCE(SUM(cost_micros), 0) DESC
   `;
-  return rows.map((r) => ({
-    // The sync stores no location_name (the source's fetcher sets it to None),
-    // so fall back to the criterion id rather than rendering a blank row.
-    segment:
+  return rows.map((r) => {
+    const criterionId = r.country_criterion_id === null ? null : Number(r.country_criterion_id);
+    // Prefer the name the sync cached from Google's geo_target_constant; fall
+    // back to the ISO table for rows synced before that existed. Only show a
+    // bare id if a country is in neither, which should not happen.
+    const name =
       r.location_name ??
-      (r.country_criterion_id != null ? `Country ${r.country_criterion_id}` : 'Unknown'),
-    ...buildTotals(r),
-  }));
+      countryNameFromCriterion(criterionId) ??
+      (criterionId !== null ? `Country ${criterionId}` : 'Unknown');
+    return {
+      segment: name,
+      criterionId,
+      isoNumeric: criterionId === null ? null : isoNumericFromCriterion(criterionId),
+      ...buildTotals(r),
+    };
+  });
 }
 
 // ─── Budgets ─────────────────────────────────────────────────────────────────

@@ -95,7 +95,7 @@ tests/                     vitest suites
 | `npm test` | Unit tests (parity, scoring, RBAC, workflow) |
 | `npm run e2e` | Workflow + RBAC end-to-end, over HTTP (needs the dev server up) |
 | `npm run check:responsive` | Real Chrome at 360 / 768 / 1280 px, plus accessibility checks |
-| `npm run parity` | Diff this app's aggregation against the Python app's |
+| `npm run parity` | Diff this app's aggregation against the Python app's, both captured live |
 | `npm run sync` | Manual Google Ads sync |
 | `npm run db:seed` / `db:migrate` / `db:studio` | Prisma |
 
@@ -282,6 +282,35 @@ against private, loopback, link-local, CGNAT and IPv4-mapped ranges, **re-checke
 at every redirect hop**, with a body size cap and a bounded link probe.
 
 ---
+
+## Geography
+
+Google Ads reports geography as a **criterion id**, and the source project
+stored `location_name` as `null` on every row — so its own reports could only
+show `Country 2356`.
+
+Two things fixed that:
+
+- **The sync now names locations.** It resolves the ids through Google's
+  `geo_target_constant` resource and caches the result in the column that was
+  already there and always empty. Cached per process; a failed lookup never
+  fails a sync.
+- **A static ISO table names anything synced earlier**, so existing rows read
+  correctly with no re-sync.
+
+The map join is deliberately not a name match. A Google Ads country criterion
+id is `2000 + ISO 3166-1 numeric` — India's 356 becomes 2356 — and the world
+topojson keys its features on the same numeric code, so one subtraction
+connects a reporting row to a polygon. Name matching is where these maps
+usually break ("Ivory Coast" vs "Côte d'Ivoire"); none of that can happen here.
+
+The choropleth (`/dashboard/segments`) shades by spend, clicks, impressions or
+conversions, buckets on a square root so one dominant market doesn't flatten
+the rest, and uses a single-hue sequential scale that survives greyscale and
+colour blindness. The topojson is served from `public/world-110m.json` as a
+static asset and the component is `dynamic()`-imported, so d3-geo costs
+nothing on any other page. Regenerate the country table with
+`node scripts/generate-country-codes.js`.
 
 ## Analytics (GA4)
 
