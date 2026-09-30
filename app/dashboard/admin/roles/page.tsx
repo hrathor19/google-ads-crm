@@ -83,7 +83,13 @@ export default function RolesPage() {
   }
 
   const canManage = can('ROLES', 'MANAGE');
-  const selected = data.roles.find((r) => r.id === selectedId) ?? data.roles[0]!;
+  // Default to the first role that actually has a matrix. Super Admin sorts
+  // first in the list but bypasses every check, so landing on it would open
+  // this page on an empty state instead of on the thing it is for.
+  const selected =
+    data.roles.find((r) => r.id === selectedId) ??
+    data.roles.find((r) => !r.isSuperAdmin) ??
+    data.roles[0]!;
   const matrix = data.matrix[selected.id] ?? {};
 
   async function toggle(feature: string, allowed: boolean) {

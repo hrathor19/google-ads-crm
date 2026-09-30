@@ -78,9 +78,8 @@ export default function DashboardPage() {
         title="Executive overview"
         description={
           data
-            ? `${formatDate(data.window.start)} – ${formatDate(data.window.end)}, compared with the ${
-                data.previousWindow.start
-              } – ${data.previousWindow.end} period.`
+            ? `${formatDate(data.window.start)} – ${formatDate(data.window.end)}, compared with ` +
+              `${formatDate(data.previousWindow.start)} – ${formatDate(data.previousWindow.end)}.`
             : 'Loading the latest synced performance…'
         }
         actions={

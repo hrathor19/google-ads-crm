@@ -51,19 +51,21 @@ function check(name: string, ok: boolean, detail = '') {
 }
 
 async function signIn(page: Page) {
-  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2' });
-  await page.waitForSelector('#email');
+  // A cold dev server compiles the route on first request, which can outrun a
+  // single navigation timeout. Warm it, then drive the form.
+  await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2', timeout: 120_000 });
+  await page.waitForSelector('#email', { timeout: 60_000 });
   await page.type('#email', process.env.SEED_ADMIN_EMAIL ?? '');
   await page.type('#password', process.env.SEED_ADMIN_PASSWORD ?? '');
   await page.click('button[type="submit"]');
 
   // The credentials provider signs in over fetch and then routes client-side,
   // so there is no document navigation to await — poll the URL instead.
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 160; i++) {
     if (page.url().includes('/dashboard')) break;
     await new Promise((r) => setTimeout(r, 250));
   }
-  await new Promise((r) => setTimeout(r, 1200));
+  await new Promise((r) => setTimeout(r, 1500));
 }
 
 async function main() {
@@ -76,6 +78,7 @@ async function main() {
     });
 
     const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(120_000);
     await page.setViewport({ width: 1280, height: 900 });
     await signIn(page);
 
@@ -98,14 +101,38 @@ async function main() {
 
         const result = await page.evaluate(() => {
           const doc = document.documentElement;
-          const overflowBy = doc.scrollWidth - doc.clientWidth;
 
-          // Which elements stick out past the viewport, if any.
+          // What "horizontal overflow" means to a user is that the *page*
+          // slides sideways. Measuring documentElement.scrollWidth does not
+          // test that: Chrome inflates it for `position: sticky` cells inside
+          // a horizontally-scrollable region, so a correctly scrolling table
+          // reports hundreds of pixels of phantom overflow. Try to scroll the
+          // page instead, and cross-check against body.scrollWidth.
+          const beforeX = window.scrollX;
+          window.scrollTo(9999, window.scrollY);
+          const scrolledX = window.scrollX;
+          window.scrollTo(beforeX, window.scrollY);
+
+          const bodyOverflow = document.body.scrollWidth - doc.clientWidth;
+          const overflowBy = Math.max(scrolledX, bodyOverflow);
+
+          // Which elements stick out past the viewport, if any — ignoring
+          // those inside a deliberate scroll container, which are clipped and
+          // scroll on their own.
           const offenders: string[] = [];
           if (overflowBy > 1) {
+            const clipped = (el: HTMLElement) => {
+              let p = el.parentElement;
+              while (p && p !== document.body) {
+                const ox = getComputedStyle(p).overflowX;
+                if (ox === 'auto' || ox === 'scroll' || ox === 'hidden') return true;
+                p = p.parentElement;
+              }
+              return false;
+            };
             for (const el of Array.from(document.querySelectorAll<HTMLElement>('body *'))) {
               const r = el.getBoundingClientRect();
-              if (r.width > 0 && r.right > doc.clientWidth + 1) {
+              if (r.width > 0 && r.right > doc.clientWidth + 1 && !clipped(el)) {
                 const cls = typeof el.className === 'string' ? el.className.slice(0, 60) : '';
                 offenders.push(`${el.tagName.toLowerCase()}.${cls}`);
                 if (offenders.length >= 3) break;
@@ -157,9 +184,11 @@ async function main() {
 
         check(`${vp.label} ${path} renders`, !result.errored);
         check(
-          `${vp.label} ${path} has no horizontal overflow`,
+          `${vp.label} ${path} does not scroll horizontally`,
           result.overflowBy <= 1,
-          result.overflowBy > 1 ? `${result.overflowBy}px past the viewport: ${result.offenders.join(', ')}` : ''
+          result.overflowBy > 1
+            ? `${result.overflowBy}px of page scroll: ${result.offenders.join(', ') || '(no unclipped offender found)'}`
+            : ''
         );
         check(`${vp.label} ${path} has a heading`, result.hasH1);
         check(

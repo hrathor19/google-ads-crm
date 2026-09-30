@@ -34,6 +34,11 @@ export function StatTile({
 }) {
   const tone = deltaTone(delta, direction);
   const Icon = tone === 'neutral' ? Minus : (delta ?? 0) > 0 ? ArrowUpRight : ArrowDownRight;
+  // A null delta means the prior period had nothing to compare against — most
+  // often because the synced history does not reach that far back. Saying so
+  // is more use than a dash next to "vs previous period", and it fits a phone
+  // tile without truncating.
+  const unavailable = delta === null || delta === undefined;
 
   const body = (
     <Card className="hover-lift">
@@ -42,24 +47,27 @@ export function StatTile({
           {label}
         </p>
         <p className="mt-1.5 text-xl font-semibold tabular-nums sm:text-2xl">{value}</p>
-        {delta !== undefined && (
-          <div className="mt-1.5 flex items-center gap-1 text-xs">
-            <span
-              className={cn(
-                'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium tabular-nums',
-                tone === 'positive' && 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-                tone === 'negative' && 'bg-destructive/10 text-destructive',
-                tone === 'neutral' && 'bg-muted text-muted-foreground'
-              )}
-            >
-              <Icon className="h-3 w-3" aria-hidden="true" />
-              {formatDelta(delta)}
-            </span>
-            <span className="truncate text-muted-foreground">
-              {previous ? `from ${previous}` : 'vs previous period'}
-            </span>
-          </div>
-        )}
+        {delta !== undefined &&
+          (unavailable ? (
+            <p className="mt-1.5 text-xs text-muted-foreground">No prior period to compare</p>
+          ) : (
+            <div className="mt-1.5 flex items-center gap-1 text-xs">
+              <span
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium tabular-nums',
+                  tone === 'positive' && 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+                  tone === 'negative' && 'bg-destructive/10 text-destructive',
+                  tone === 'neutral' && 'bg-muted text-muted-foreground'
+                )}
+              >
+                <Icon className="h-3 w-3" aria-hidden="true" />
+                {formatDelta(delta)}
+              </span>
+              <span className="truncate text-muted-foreground">
+                {previous ? `from ${previous}` : 'vs prior period'}
+              </span>
+            </div>
+          ))}
       </CardContent>
     </Card>
   );
