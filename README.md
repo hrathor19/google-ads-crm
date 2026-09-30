@@ -109,17 +109,42 @@ npm run sync -- --customers=8104811686 --entities=keywords
 
 The same code backs the **Refresh** button in the top bar.
 
-#### Backfilling history
+#### Backfilling history (`npm run backfill`)
 
 The scheduled sync only ever pulls a **rolling window** (30 days by default),
 so any date before your first sync renders empty — which reads as "nothing was
 spent" when it actually means "never fetched". Google keeps the history; it
 just has to be asked for.
 
+For a single window, `sync` takes an explicit range:
+
 ```bash
-npm run sync -- --start=2026-04-01 --end=2026-04-30                    # one month
-npm run sync -- --start=2026-01-01 --end=2026-03-31 --entities=campaigns
+npm run sync -- --start=2026-04-01 --end=2026-04-30
 ```
+
+For a long history, use `backfill`, which splits the range into **month-sized
+chunks**:
+
+```bash
+npm run backfill -- --from=2025-11 --to=2026-09
+npm run backfill -- --from=2026-01 --to=2026-03 --entities=campaigns
+```
+
+Month chunks matter for three reasons: each Google Ads query stays bounded so a
+wide account can't time out; `replaceWindow` clears and rewrites exactly the
+window it is given, making a month the unit of idempotency; and an interrupted
+run leaves whole completed months behind, so resuming is just running the same
+command again.
+
+Start with `--entities=campaigns` — it carries devices and geo with it, and
+covers the dashboard, trends, accounts and the map. Widen to ad groups,
+keywords and search terms only if you need the drill-downs; keywords are the
+largest table by an order of magnitude.
+
+> Note on search terms: Google's `search_term_view` is retention-limited and
+> returns nothing for older dates, so a deep backfill of that entity is mostly
+> empty queries. Campaign, ad group, ad and keyword history goes back much
+> further.
 
 Or from the UI: **Administration → Integrations health → Backfill historical
 data**. A run with an explicit range is recorded in `sync_logs` as
