@@ -22,6 +22,8 @@ import { defaultDateRange } from './reports';
  *     each sync deterministic — exactly one row per (entity, day).
  */
 
+export type SyncRunType = 'manual' | 'daily' | 'hourly' | 'backfill';
+
 export type SyncEntity =
   | 'accounts'
   | 'campaigns'
@@ -55,6 +57,7 @@ export type EntityResult = {
 export type SyncResult = {
   startedAt: string;
   finishedAt: string;
+  syncType: SyncRunType;
   window: { start: string; end: string };
   accountsProcessed: number;
   results: EntityResult[];
@@ -72,7 +75,7 @@ const isoDay = (d: Date) => d.toISOString().slice(0, 10);
  * dashboards can read.
  */
 async function openSyncLog(
-  syncType: 'manual' | 'daily' | 'hourly' | 'backfill',
+  syncType: SyncRunType,
   entity: string,
   customerId: string | null,
   start: Date,
@@ -192,14 +195,14 @@ function metricColumns(m: reports.Metrics): Record<string, unknown> {
 // ─── Account discovery ───────────────────────────────────────────────────────
 
 /** Upsert the MCC and its children, and return the syncable client accounts. */
-export async function syncAccounts(): Promise<{
+export async function syncAccounts(syncType: SyncRunType = 'manual'): Promise<{
   result: EntityResult;
   accounts: Array<{ id: number; customerId: string; name: string | null }>;
 }> {
   const t0 = Date.now();
   const cfg = env.googleAds();
   const { start, end } = defaultDateRange(1);
-  const logId = await openSyncLog('manual', 'accounts', cfg.loginCustomerId, start, end);
+  const logId = await openSyncLog(syncType, 'accounts', cfg.loginCustomerId, start, end);
 
   try {
     const fetched = await reports.fetchAccounts(cfg.loginCustomerId);
@@ -296,6 +299,7 @@ type EntitySyncContext = {
   customerId: string;
   start: Date;
   end: Date;
+  syncType: SyncRunType;
 };
 
 async function runEntity(
@@ -304,7 +308,7 @@ async function runEntity(
   fn: (logId: number) => Promise<{ inserted: number; updated: number; failed: number }>
 ): Promise<EntityResult> {
   const t0 = Date.now();
-  const logId = await openSyncLog('manual', entity, ctx.customerId, ctx.start, ctx.end);
+  const logId = await openSyncLog(ctx.syncType, entity, ctx.customerId, ctx.start, ctx.end);
   try {
     const counts = await fn(logId);
     const status = counts.failed > 0 ? 'partial' : 'success';
@@ -812,16 +816,22 @@ export async function runSync(
     entities?: SyncEntity[];
     customerIds?: string[];
     lookbackDays?: number;
+    /** An explicit window. Supplying both marks the run as a backfill. */
     start?: Date;
     end?: Date;
   } = {}
 ): Promise<SyncResult> {
   const startedAt = new Date();
   const lookback = options.lookbackDays ?? env.sync().defaultLookbackDays;
+  const isBackfill = Boolean(options.start && options.end);
   const range =
     options.start && options.end
       ? { start: options.start, end: options.end }
       : defaultDateRange(lookback);
+  // The rolling refresh and a historical backfill are different operations to
+  // whoever reads sync_logs later; the source project distinguished them and
+  // so does this.
+  const syncType: SyncRunType = isBackfill ? 'backfill' : 'manual';
 
   const entities = options.entities?.length ? options.entities : SYNC_ENTITIES;
   const results: EntityResult[] = [];
@@ -829,7 +839,7 @@ export async function runSync(
   let accounts: Array<{ id: number; customerId: string; name: string | null }> = [];
 
   if (entities.includes('accounts')) {
-    const { result, accounts: discovered } = await syncAccounts();
+    const { result, accounts: discovered } = await syncAccounts(syncType);
     results.push(result);
     accounts = discovered;
   } else {
@@ -859,6 +869,7 @@ export async function runSync(
       customerId: account.customerId,
       start: range.start,
       end: range.end,
+      syncType,
     };
     for (const entity of perAccountEntities) {
       results.push(await ENTITY_RUNNERS[entity](ctx));
@@ -868,6 +879,7 @@ export async function runSync(
   return {
     startedAt: startedAt.toISOString(),
     finishedAt: new Date().toISOString(),
+    syncType,
     window: { start: isoDay(range.start), end: isoDay(range.end) },
     accountsProcessed: accounts.length,
     results,

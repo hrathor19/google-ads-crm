@@ -8,11 +8,25 @@ export const dynamic = 'force-dynamic';
 // A full sync walks 120 accounts; the default serverless budget is far too short.
 export const maxDuration = 300;
 
-const schema = z.object({
-  entities: z.array(z.enum(SYNC_ENTITIES as [SyncEntity, ...SyncEntity[]])).optional(),
-  customerIds: z.array(z.string()).optional(),
-  lookbackDays: z.coerce.number().int().min(1).max(365).optional(),
-});
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+const schema = z
+  .object({
+    entities: z.array(z.enum(SYNC_ENTITIES as [SyncEntity, ...SyncEntity[]])).optional(),
+    customerIds: z.array(z.string()).optional(),
+    lookbackDays: z.coerce.number().int().min(1).max(365).optional(),
+    /** An explicit historical window — a backfill rather than a refresh. */
+    start: z.string().regex(DAY).optional(),
+    end: z.string().regex(DAY).optional(),
+  })
+  .refine((v) => (v.start === undefined) === (v.end === undefined), {
+    message: 'A backfill needs both start and end.',
+    path: ['start'],
+  })
+  .refine((v) => !v.start || !v.end || v.start <= v.end, {
+    message: 'start must not be after end.',
+    path: ['start'],
+  });
 
 /** The "last synced at" indicator. */
 export async function GET() {
@@ -32,8 +46,15 @@ export async function POST(req: Request) {
       actorId: principal.userId,
       actorEmail: principal.email,
       action: 'SYNC_TRIGGERED',
-      description: `Triggered a sync (${(body.entities ?? SYNC_ENTITIES).join(', ')})`,
-      metadata: { entities: body.entities ?? SYNC_ENTITIES, lookbackDays: body.lookbackDays ?? null },
+      description: body.start
+        ? `Backfilled ${body.start} to ${body.end} (${(body.entities ?? SYNC_ENTITIES).join(', ')})`
+        : `Triggered a sync (${(body.entities ?? SYNC_ENTITIES).join(', ')})`,
+      metadata: {
+        entities: body.entities ?? SYNC_ENTITIES,
+        lookbackDays: body.lookbackDays ?? null,
+        start: body.start ?? null,
+        end: body.end ?? null,
+      },
       ipAddress: clientIp(req),
     });
 
@@ -59,6 +80,8 @@ export async function POST(req: Request) {
       entities: body.entities,
       customerIds,
       lookbackDays: body.lookbackDays,
+      start: body.start ? new Date(`${body.start}T00:00:00.000Z`) : undefined,
+      end: body.end ? new Date(`${body.end}T00:00:00.000Z`) : undefined,
     });
   });
 }

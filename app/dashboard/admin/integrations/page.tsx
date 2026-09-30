@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/components/data/page-header';
+import { BackfillCard } from '@/components/data/backfill-card';
 import { ErrorState } from '@/components/data/states';
 import { apiSend, useApi } from '@/lib/hooks/use-api';
 import { usePermissions } from '@/components/providers/permission-provider';
@@ -160,6 +161,8 @@ export default function IntegrationsPage() {
               );
             })}
           </div>
+
+          <BackfillCard />
 
           <Card>
             <CardHeader className="pb-3">

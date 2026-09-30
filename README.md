@@ -107,7 +107,30 @@ npm run sync -- --entities=campaigns --days=7            # one entity, shorter w
 npm run sync -- --customers=8104811686 --entities=keywords
 ```
 
-The same code backs the **Refresh** button in the top bar. Each `(entity,
+The same code backs the **Refresh** button in the top bar.
+
+#### Backfilling history
+
+The scheduled sync only ever pulls a **rolling window** (30 days by default),
+so any date before your first sync renders empty — which reads as "nothing was
+spent" when it actually means "never fetched". Google keeps the history; it
+just has to be asked for.
+
+```bash
+npm run sync -- --start=2026-04-01 --end=2026-04-30                    # one month
+npm run sync -- --start=2026-01-01 --end=2026-03-31 --entities=campaigns
+```
+
+Or from the UI: **Administration → Integrations health → Backfill historical
+data**. A run with an explicit range is recorded in `sync_logs` as
+`sync_type = 'backfill'` rather than `'manual'`, so the two are distinguishable
+afterwards.
+
+Backfill is deliberately separate from the Refresh button: a wide range across
+every account is minutes of API calls against a shared quota, and that should
+be a decision rather than an accidental click. Start with the campaigns preset
+— it covers the dashboard, trends and the geography map — and widen only if you
+need keyword or search-term history. Each `(entity,
 account, run)` writes one `sync_logs` row and each snapshot window is deleted
 and re-inserted, so a re-run over an overlapping range cannot stack duplicate
 rows and inflate every sum.
