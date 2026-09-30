@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -99,6 +99,25 @@ export function DataTable<T extends { [k: string]: unknown }>({
   const safePage = Math.min(page, pageCount - 1);
   const pageRows = sorted.slice(safePage * pageSize, (safePage + 1) * pageSize);
 
+  // Whether the table can still be scrolled further right, which is what the
+  // edge fade signals. Recomputed on scroll and on resize, plus whenever the
+  // rows change, since paging can change the content width.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [hasMoreRight, setHasMoreRight] = useState(false);
+  const syncFade = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setHasMoreRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 1);
+  }, []);
+  useEffect(() => {
+    syncFade();
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(syncFade);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [syncFade, pageRows]);
+
   function toggleSort(key: string) {
     setPage(0);
     setSort((prev) =>
@@ -145,13 +164,18 @@ export function DataTable<T extends { [k: string]: unknown }>({
       <Card className="hidden overflow-hidden md:block">
         <CardContent className="p-0">
           {/* A horizontally scrollable table gives no hint that it scrolls, so
-              a faint edge fade marks where the content continues. */}
+              a faint edge fade marks where the content continues — but only
+              while there is more to reach. Left up permanently it just greys
+              out the last column's digits on tables that already fit. */}
           <div className="relative">
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-card to-transparent"
+              className={cn(
+                'pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-card to-transparent transition-opacity',
+                hasMoreRight ? 'opacity-100' : 'opacity-0'
+              )}
             />
-            <div className="overflow-x-auto">
+            <div ref={scrollRef} onScroll={syncFade} className="overflow-x-auto">
             <table className="w-full caption-bottom text-sm">
               {caption && <caption className="sr-only">{caption}</caption>}
               <thead className="border-b bg-muted/40">

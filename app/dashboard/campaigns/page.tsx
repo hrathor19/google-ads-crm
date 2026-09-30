@@ -54,7 +54,7 @@ export default function CampaignsPage() {
       header: 'Health',
       // Without a cap the reason text ("Spend up 340% week over week", …)
       // stretches this column and pushes the metrics off the right edge.
-      maxWidth: '13rem',
+      maxWidth: '11.5rem',
       cell: (r) =>
         r.health ? (
           <div className="flex min-w-0 items-center gap-2">
