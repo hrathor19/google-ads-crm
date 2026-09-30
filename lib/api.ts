@@ -32,10 +32,31 @@ export const badRequest = (msg: string, detail?: unknown) => new ApiError(400, m
 export const notFound = (msg = 'Not found.') => new ApiError(404, msg);
 export const conflict = (msg: string) => new ApiError(409, msg);
 
-/** Resolve the signed-in user into a Principal, or throw 401. */
-export async function requireUser(): Promise<Principal> {
+export const passwordChangeRequired = () =>
+  new ApiError(403, 'Change your password before using the app.');
+
+/**
+ * Resolve the signed-in user into a Principal, or throw 401.
+ *
+ * A user still owing a password change is refused by default. The middleware
+ * redirects them away from pages, but its matcher covers `/dashboard/:path*`
+ * only — it never sees `/api/*`, so without this an account whose password is
+ * known to somebody else (the seeded admin in `.env`, or any user an admin
+ * just created) could read every campaign, keyword and account straight from
+ * the API while the browser bounced it to /change-password.
+ *
+ * Only the change-password endpoint itself passes
+ * `allowPendingPasswordChange`, since it is the one thing such a user must be
+ * able to reach.
+ */
+export async function requireUser(
+  options: { allowPendingPasswordChange?: boolean } = {}
+): Promise<Principal> {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) throw unauthorized();
+  if (session.user.mustChangePassword && !options.allowPendingPasswordChange) {
+    throw passwordChangeRequired();
+  }
 
   const allowedAccountIds = await resolveAllowedAccountIds(session.user.id);
 

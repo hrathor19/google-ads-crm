@@ -23,7 +23,9 @@ export default withAuth(
     const changingPassword = pathname.startsWith('/change-password');
 
     // A seeded or admin-reset password is known to someone other than its
-    // owner, so nothing else in the app opens until it's replaced.
+    // owner, so the app stays shut until it's replaced. This half only covers
+    // pages — the matcher below never sees /api/*, so requireUser() in
+    // lib/api.ts enforces the same rule for every API route.
     if (token.mustChangePassword && !changingPassword) {
       return NextResponse.redirect(new URL('/change-password', req.url));
     }

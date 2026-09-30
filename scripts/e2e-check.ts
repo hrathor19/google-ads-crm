@@ -70,9 +70,24 @@ class Session {
     return { status: res.status, body: body as T };
   }
 
+  async csrf(): Promise<{ csrfToken: string }> {
+    const res = await this.fetch('/api/auth/csrf');
+    return (await res.json()) as { csrfToken: string };
+  }
+
+  /** What useSession().update() does on the wire: re-read the JWT from the DB. */
+  async refreshSession(): Promise<number> {
+    const { csrfToken } = await this.csrf();
+    const res = await this.fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ csrfToken, data: {} }),
+    });
+    return res.status;
+  }
+
   async login(email: string, password: string): Promise<boolean> {
-    const csrfRes = await this.fetch('/api/auth/csrf');
-    const { csrfToken } = (await csrfRes.json()) as { csrfToken: string };
+    const { csrfToken } = await this.csrf();
     await this.fetch('/api/auth/callback/credentials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -490,6 +505,78 @@ async function main() {
     ]) {
       check(`Audit recorded ${expected}`, actions.has(expected));
     }
+  }
+
+  // ── A pending password change must gate the API, not just the pages ──────
+  //
+  // The middleware matcher covers /dashboard/:path* and never sees /api/*, so
+  // this was once bypassable: the browser bounced to /change-password while
+  // the API happily returned every campaign and keyword. The password on such
+  // an account is known to somebody else, which is the whole point of the gate.
+  {
+    const pendingEmail = 'e2e.pending-password@example.com';
+    const role = await ensureRole('super-admin');
+    const pendingPassword = 'E2ePendingPass1';
+    await prisma.crmUser.upsert({
+      where: { email: pendingEmail },
+      create: {
+        email: pendingEmail,
+        name: 'E2E Pending Password',
+        password: await bcrypt.hash(pendingPassword, 10),
+        roleId: role.id,
+        isActive: true,
+        mustChangePassword: true,
+        allAccounts: true,
+      },
+      update: {
+        password: await bcrypt.hash(pendingPassword, 10),
+        roleId: role.id,
+        isActive: true,
+        mustChangePassword: true,
+      },
+    });
+
+    const pending = new Session();
+    check('A user owing a password change can sign in', await pending.login(pendingEmail, pendingPassword));
+
+    const blocked = await pending.fetch('/api/campaigns');
+    check(
+      'A user owing a password change is refused data from the API',
+      blocked.status === 403,
+      `got ${blocked.status}`
+    );
+
+    const wrongCurrent = await pending.fetch('/api/me/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: 'not-it', newPassword: 'E2eChangedPass1' }),
+    });
+    check(
+      'The change-password endpoint still rejects a wrong current password',
+      wrongCurrent.status === 400,
+      `got ${wrongCurrent.status}`
+    );
+
+    const changed = await pending.fetch('/api/me/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: pendingPassword, newPassword: 'E2eChangedPass1' }),
+    });
+    check(
+      'The change-password endpoint stays reachable while the gate is up',
+      changed.status === 200,
+      `got ${changed.status}`
+    );
+
+    await pending.refreshSession();
+    const allowed = await pending.fetch('/api/campaigns');
+    check(
+      'The API opens once the password has been changed',
+      allowed.status === 200,
+      `got ${allowed.status}`
+    );
+
+    await prisma.crmUser.deleteMany({ where: { email: pendingEmail } });
   }
 
   // Leave nothing behind but the users, which a re-run reuses.

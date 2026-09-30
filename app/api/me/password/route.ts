@@ -17,7 +17,8 @@ const schema = z.object({
 
 export async function POST(req: Request) {
   return handle(async () => {
-    const principal = await requireUser();
+    // The one endpoint a user owing a password change must still reach.
+    const principal = await requireUser({ allowPendingPasswordChange: true });
     const body = await parseBody(req, schema);
 
     const user = await prisma.crmUser.findUniqueOrThrow({
