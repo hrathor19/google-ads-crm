@@ -21,6 +21,7 @@
     "e2e": "node --conditions=react-server -r ./scripts/_runner.js scripts/e2e-check.ts",
     "check:responsive": "node --conditions=react-server -r ./scripts/_runner.js scripts/responsive-check.ts",
     "parity": "node --conditions=react-server -r ./scripts/_runner.js scripts/parity-compare.ts",
+    "check:secrets": "node --conditions=react-server -r ./scripts/_runner.js scripts/secret-scan.ts",
     "backfill": "node --conditions=react-server -r ./scripts/_runner.js scripts/backfill.ts"
   },
   "dependencies": {
