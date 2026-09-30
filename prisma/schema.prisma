@@ -1,0 +1,1128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model account_budgets {
+  account_id   Int
+  period       String   @db.VarChar(8)
+  period_start DateTime @db.Date
+  amount       Decimal  @db.Decimal(16, 2)
+  set_by       String?  @db.VarChar(160)
+  id           Int      @id(map: "pk_account_budgets") @default(autoincrement())
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+  accounts     accounts @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_account_budgets_account_id_accounts")
+
+  @@unique([account_id, period, period_start], map: "account_budget_uq")
+  @@index([account_id], map: "ix_account_budgets_account_id")
+  @@index([period_start], map: "ix_account_budgets_period_start")
+}
+
+model account_weekly_budgets {
+  account_id Int
+  week_start DateTime @db.Date
+  amount     Decimal  @db.Decimal(14, 2)
+  set_by     String?  @db.VarChar(160)
+  id         Int      @id(map: "pk_account_weekly_budgets") @default(autoincrement())
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  accounts   accounts @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_account_weekly_budgets_account_id_accounts")
+
+  @@unique([account_id, week_start], map: "account_weekly_budget_uq")
+  @@index([account_id], map: "ix_account_weekly_budgets_account_id")
+  @@index([week_start], map: "ix_account_weekly_budgets_week_start")
+}
+
+model accounts {
+  customer_id               String                      @unique(map: "ix_accounts_customer_id") @db.VarChar(20)
+  descriptive_name          String?                     @db.VarChar(255)
+  currency_code             String?                     @db.VarChar(8)
+  time_zone                 String?                     @db.VarChar(64)
+  status                    String?                     @db.VarChar(32)
+  is_manager                Boolean
+  manager_customer_id       String?                     @db.VarChar(20)
+  test_account              Boolean?
+  auto_tagging_enabled      Boolean?
+  is_syncable               Boolean
+  id                        Int                         @id(map: "pk_accounts") @default(autoincrement())
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  account_budgets           account_budgets[]
+  account_weekly_budgets    account_weekly_budgets[]
+  ad_copy_generations       ad_copy_generations[]
+  ad_group_snapshots        ad_group_snapshots[]
+  ad_groups                 ad_groups[]
+  ad_snapshots              ad_snapshots[]
+  ads                       ads[]
+  alerts                    alerts[]
+  api_tokens                api_tokens[]
+  budget_snapshots          budget_snapshots[]
+  budgets                   budgets[]
+  campaign_device_snapshots campaign_device_snapshots[]
+  campaign_geo_snapshots    campaign_geo_snapshots[]
+  campaign_snapshots        campaign_snapshots[]
+  campaigns                 campaigns[]
+  keyword_snapshots         keyword_snapshots[]
+  keywords                  keywords[]
+  recommendations           recommendations[]
+  scorecard_snapshots       scorecard_snapshots[]
+  search_term_snapshots     search_term_snapshots[]
+  search_terms              search_terms[]
+  user_accounts             user_accounts[]
+  CrmRoleAccount            CrmRoleAccount[]
+  CrmUserAccount            CrmUserAccount[]
+  CrmAdRequest              CrmAdRequest[]
+
+  @@index([manager_customer_id], map: "ix_accounts_manager_customer_id")
+}
+
+model ad_copy_generations {
+  actor                                              String?               @db.VarChar(320)
+  campus                                             String                @db.VarChar(255)
+  account_id                                         Int?
+  campaign_id                                        Int?
+  final_url                                          String?
+  url_source                                         String?               @db.VarChar(48)
+  url_confidence                                     Decimal?              @db.Decimal(5, 4)
+  backend                                            String?               @db.VarChar(16)
+  historical_features_used                           Json?
+  keyword_snapshot                                   Json?
+  keyword_edits                                      Json?
+  generated_assets                                   Json?
+  scores                                             Json?
+  reasoning                                          Json?
+  approval_status                                    String                @db.VarChar(16)
+  submitted_at                                       DateTime?             @db.Timestamp(6)
+  reviewed_at                                        DateTime?             @db.Timestamp(6)
+  reviewer_name                                      String?               @db.VarChar(160)
+  review_note                                        String?
+  overrides                                          Json?
+  approval_token                                     String?               @db.VarChar(64)
+  ad_manager                                         String?               @db.VarChar(160)
+  owner_user_id                                      Int?
+  submitter_user_id                                  Int?
+  id                                                 Int                   @id(map: "pk_ad_copy_generations") @default(autoincrement())
+  created_at                                         DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at                                         DateTime              @default(now()) @db.Timestamptz(6)
+  accounts                                           accounts?             @relation(fields: [account_id], references: [id], onUpdate: NoAction, map: "fk_ad_copy_generations_account_id_accounts")
+  campaigns                                          campaigns?            @relation(fields: [campaign_id], references: [id], onUpdate: NoAction, map: "fk_ad_copy_generations_campaign_id_campaigns")
+  users_ad_copy_generations_owner_user_idTousers     users?                @relation("ad_copy_generations_owner_user_idTousers", fields: [owner_user_id], references: [id], onUpdate: NoAction, map: "fk_ad_copy_generations_owner_user_id_users")
+  users_ad_copy_generations_submitter_user_idTousers users?                @relation("ad_copy_generations_submitter_user_idTousers", fields: [submitter_user_id], references: [id], onUpdate: NoAction, map: "fk_ad_copy_generations_submitter_user_id_users")
+  approval_events                                    approval_events[]
+  scorecard_snapshots                                scorecard_snapshots[]
+
+  @@index([account_id, created_at], map: "ix_ad_copy_generations_account_created")
+  @@index([account_id], map: "ix_ad_copy_generations_account_id")
+  @@index([actor], map: "ix_ad_copy_generations_actor")
+  @@index([ad_manager], map: "ix_ad_copy_generations_ad_manager")
+  @@index([approval_status], map: "ix_ad_copy_generations_approval_status")
+  @@index([approval_token], map: "ix_ad_copy_generations_approval_token")
+  @@index([campaign_id], map: "ix_ad_copy_generations_campaign_id")
+  @@index([campus], map: "ix_ad_copy_generations_campus")
+  @@index([campus, created_at], map: "ix_ad_copy_generations_campus_created")
+  @@index([owner_user_id], map: "ix_ad_copy_generations_owner_user_id")
+  @@index([submitter_user_id], map: "ix_ad_copy_generations_submitter_user_id")
+}
+
+model ad_group_snapshots {
+  ad_group_id        Int
+  campaign_id        Int
+  status             String?    @db.VarChar(32)
+  cpc_bid_micros     BigInt?
+  id                 Int        @id(map: "pk_ad_group_snapshots") @default(autoincrement())
+  snapshot_date      DateTime   @db.Date
+  sync_time          DateTime   @default(now()) @db.Timestamptz(6)
+  account_id         Int
+  sync_log_id        Int?
+  impressions        BigInt
+  clicks             BigInt
+  interactions       BigInt
+  cost_micros        BigInt
+  ctr                Decimal?   @db.Decimal(12, 6)
+  average_cpc_micros BigInt?
+  average_cpm_micros BigInt?
+  conversions        Decimal    @db.Decimal(16, 4)
+  conversions_value  Decimal    @db.Decimal(18, 4)
+  all_conversions    Decimal    @db.Decimal(16, 4)
+  video_views        BigInt
+  accounts           accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_group_snapshots_account_id_accounts")
+  ad_groups          ad_groups  @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_group_snapshots_ad_group_id_ad_groups")
+  campaigns          campaigns  @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_group_snapshots_campaign_id_campaigns")
+  sync_logs          sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_ad_group_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id], map: "ix_ad_group_snapshots_account_id")
+  @@index([ad_group_id], map: "ix_ad_group_snapshots_ad_group_id")
+  @@index([campaign_id], map: "ix_ad_group_snapshots_campaign_id")
+  @@index([snapshot_date], map: "ix_ad_group_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_ad_group_snapshots_sync_time")
+}
+
+model ad_groups {
+  account_id            Int
+  campaign_id           Int
+  ad_group_id           BigInt
+  name                  String?                 @db.VarChar(512)
+  status                String?                 @db.VarChar(32)
+  type                  String?                 @db.VarChar(64)
+  cpc_bid_micros        BigInt?
+  id                    Int                     @id(map: "pk_ad_groups") @default(autoincrement())
+  created_at            DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime                @default(now()) @db.Timestamptz(6)
+  ad_group_snapshots    ad_group_snapshots[]
+  accounts              accounts                @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_groups_account_id_accounts")
+  campaigns             campaigns               @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_groups_campaign_id_campaigns")
+  ad_snapshots          ad_snapshots[]
+  ads                   ads[]
+  keyword_snapshots     keyword_snapshots[]
+  keywords              keywords[]
+  search_term_snapshots search_term_snapshots[]
+  search_terms          search_terms[]
+
+  @@unique([campaign_id, ad_group_id], map: "ad_groups_campaign_adgroup")
+  @@index([account_id], map: "ix_ad_groups_account_id")
+  @@index([ad_group_id], map: "ix_ad_groups_ad_group_id")
+  @@index([campaign_id], map: "ix_ad_groups_campaign_id")
+}
+
+model ad_snapshots {
+  ad_id              Int
+  ad_group_id        Int
+  campaign_id        Int
+  status             String?    @db.VarChar(32)
+  approval_status    String?    @db.VarChar(32)
+  id                 Int        @id(map: "pk_ad_snapshots") @default(autoincrement())
+  snapshot_date      DateTime   @db.Date
+  sync_time          DateTime   @default(now()) @db.Timestamptz(6)
+  account_id         Int
+  sync_log_id        Int?
+  impressions        BigInt
+  clicks             BigInt
+  interactions       BigInt
+  cost_micros        BigInt
+  ctr                Decimal?   @db.Decimal(12, 6)
+  average_cpc_micros BigInt?
+  average_cpm_micros BigInt?
+  conversions        Decimal    @db.Decimal(16, 4)
+  conversions_value  Decimal    @db.Decimal(18, 4)
+  all_conversions    Decimal    @db.Decimal(16, 4)
+  video_views        BigInt
+  accounts           accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_snapshots_account_id_accounts")
+  ad_groups          ad_groups  @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_snapshots_ad_group_id_ad_groups")
+  ads                ads        @relation(fields: [ad_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_snapshots_ad_id_ads")
+  campaigns          campaigns  @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ad_snapshots_campaign_id_campaigns")
+  sync_logs          sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_ad_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id, snapshot_date], map: "ix_ad_snapshots_account_date")
+  @@index([account_id], map: "ix_ad_snapshots_account_id")
+  @@index([ad_group_id], map: "ix_ad_snapshots_ad_group_id")
+  @@index([ad_id], map: "ix_ad_snapshots_ad_id")
+  @@index([campaign_id], map: "ix_ad_snapshots_campaign_id")
+  @@index([snapshot_date], map: "ix_ad_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_ad_snapshots_sync_time")
+}
+
+model ads {
+  account_id      Int
+  ad_group_id     Int
+  ad_id           BigInt
+  type            String?        @db.VarChar(64)
+  status          String?        @db.VarChar(32)
+  approval_status String?        @db.VarChar(32)
+  final_urls      String?
+  headlines       String?
+  descriptions    String?
+  id              Int            @id(map: "pk_ads") @default(autoincrement())
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime       @default(now()) @db.Timestamptz(6)
+  ad_snapshots    ad_snapshots[]
+  accounts        accounts       @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ads_account_id_accounts")
+  ad_groups       ad_groups      @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_ads_ad_group_id_ad_groups")
+
+  @@unique([ad_group_id, ad_id], map: "ads_adgroup_ad")
+  @@index([account_id], map: "ix_ads_account_id")
+  @@index([ad_group_id], map: "ix_ads_ad_group_id")
+  @@index([ad_id], map: "ix_ads_ad_id")
+}
+
+model alembic_version {
+  version_num String @id(map: "alembic_version_pkc") @db.VarChar(32)
+}
+
+model alerts {
+  account_id       Int?
+  entity_type      String    @db.VarChar(32)
+  entity_id        Int?
+  entity_name      String?   @db.VarChar(512)
+  alert_type       String    @db.VarChar(48)
+  severity         String    @db.VarChar(16)
+  status           String    @db.VarChar(16)
+  title            String    @db.VarChar(255)
+  description      String?
+  suggested_action String?
+  metric_value     Decimal?  @db.Decimal(18, 4)
+  threshold_value  Decimal?  @db.Decimal(18, 4)
+  dedupe_key       String    @unique(map: "ix_alerts_dedupe_key") @db.VarChar(255)
+  first_seen_at    DateTime  @default(now()) @db.Timestamptz(6)
+  last_seen_at     DateTime  @default(now()) @db.Timestamptz(6)
+  resolved_at      DateTime? @db.Timestamptz(6)
+  details          Json?
+  id               Int       @id(map: "pk_alerts") @default(autoincrement())
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @db.Timestamptz(6)
+  accounts         accounts? @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_alerts_account_id_accounts")
+
+  @@index([account_id], map: "ix_alerts_account_id")
+  @@index([alert_type], map: "ix_alerts_alert_type")
+  @@index([entity_id], map: "ix_alerts_entity_id")
+  @@index([entity_type], map: "ix_alerts_entity_type")
+  @@index([severity], map: "ix_alerts_severity")
+  @@index([status], map: "ix_alerts_status")
+}
+
+model api_tokens {
+  provider                String    @db.VarChar(32)
+  account_id              Int?
+  client_id               String?   @db.VarChar(255)
+  refresh_token_encrypted String?
+  scopes                  String?
+  expires_at              DateTime? @db.Timestamptz(6)
+  is_active               Boolean
+  id                      Int       @id(map: "pk_api_tokens") @default(autoincrement())
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
+  accounts                accounts? @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_api_tokens_account_id_accounts")
+
+  @@index([account_id], map: "ix_api_tokens_account_id")
+  @@index([provider], map: "ix_api_tokens_provider")
+}
+
+model approval_events {
+  generation_id       Int
+  event               String              @db.VarChar(24)
+  actor               String?             @db.VarChar(160)
+  note                String?
+  id                  Int                 @id(map: "pk_approval_events") @default(autoincrement())
+  created_at          DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime            @default(now()) @db.Timestamptz(6)
+  ad_copy_generations ad_copy_generations @relation(fields: [generation_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_approval_events_generation_id_ad_copy_generations")
+
+  @@index([generation_id], map: "ix_approval_events_generation_id")
+}
+
+model audit_logs {
+  actor       String?  @db.VarChar(320)
+  role        String?  @db.VarChar(32)
+  method      String   @db.VarChar(8)
+  path        String   @db.VarChar(512)
+  status_code Int?
+  duration_ms Int?
+  client_ip   String?  @db.VarChar(64)
+  detail      String?
+  id          Int      @id(map: "pk_audit_logs") @default(autoincrement())
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([actor], map: "ix_audit_logs_actor")
+  @@index([path], map: "ix_audit_logs_path")
+}
+
+model budget_snapshots {
+  budget_id       Int
+  amount_micros   BigInt?
+  spend_micros    BigInt?
+  utilization     Decimal?   @db.Decimal(10, 4)
+  delivery_method String?    @db.VarChar(32)
+  id              Int        @id(map: "pk_budget_snapshots") @default(autoincrement())
+  snapshot_date   DateTime   @db.Date
+  sync_time       DateTime   @default(now()) @db.Timestamptz(6)
+  account_id      Int
+  sync_log_id     Int?
+  accounts        accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_budget_snapshots_account_id_accounts")
+  budgets         budgets    @relation(fields: [budget_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_budget_snapshots_budget_id_budgets")
+  sync_logs       sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_budget_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id], map: "ix_budget_snapshots_account_id")
+  @@index([budget_id, snapshot_date], map: "ix_budget_snapshots_budget_date")
+  @@index([budget_id], map: "ix_budget_snapshots_budget_id")
+  @@index([snapshot_date], map: "ix_budget_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_budget_snapshots_sync_time")
+}
+
+model budgets {
+  account_id        Int
+  budget_id         BigInt
+  name              String?            @db.VarChar(512)
+  amount_micros     BigInt?
+  delivery_method   String?            @db.VarChar(32)
+  period            String?            @db.VarChar(32)
+  explicitly_shared Boolean?
+  id                Int                @id(map: "pk_budgets") @default(autoincrement())
+  created_at        DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime           @default(now()) @db.Timestamptz(6)
+  budget_snapshots  budget_snapshots[]
+  accounts          accounts           @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_budgets_account_id_accounts")
+
+  @@unique([account_id, budget_id], map: "budgets_account_budget")
+  @@index([account_id], map: "ix_budgets_account_id")
+  @@index([budget_id], map: "ix_budgets_budget_id")
+}
+
+model campaign_device_snapshots {
+  campaign_id        Int
+  device             String     @db.VarChar(32)
+  id                 Int        @id(map: "pk_campaign_device_snapshots") @default(autoincrement())
+  snapshot_date      DateTime   @db.Date
+  sync_time          DateTime   @default(now()) @db.Timestamptz(6)
+  account_id         Int
+  sync_log_id        Int?
+  impressions        BigInt
+  clicks             BigInt
+  interactions       BigInt
+  cost_micros        BigInt
+  ctr                Decimal?   @db.Decimal(12, 6)
+  average_cpc_micros BigInt?
+  average_cpm_micros BigInt?
+  conversions        Decimal    @db.Decimal(16, 4)
+  conversions_value  Decimal    @db.Decimal(18, 4)
+  all_conversions    Decimal    @db.Decimal(16, 4)
+  video_views        BigInt
+  accounts           accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaign_device_snapshots_account_id_accounts")
+  campaigns          campaigns  @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaign_device_snapshots_campaign_id_campaigns")
+  sync_logs          sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_campaign_device_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id], map: "ix_campaign_device_snapshots_account_id")
+  @@index([campaign_id], map: "ix_campaign_device_snapshots_campaign_id")
+  @@index([device], map: "ix_campaign_device_snapshots_device")
+  @@index([snapshot_date], map: "ix_campaign_device_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_campaign_device_snapshots_sync_time")
+}
+
+model campaign_geo_snapshots {
+  campaign_id          Int
+  country_criterion_id BigInt?
+  location_name        String?    @db.VarChar(255)
+  id                   Int        @id(map: "pk_campaign_geo_snapshots") @default(autoincrement())
+  snapshot_date        DateTime   @db.Date
+  sync_time            DateTime   @default(now()) @db.Timestamptz(6)
+  account_id           Int
+  sync_log_id          Int?
+  impressions          BigInt
+  clicks               BigInt
+  interactions         BigInt
+  cost_micros          BigInt
+  ctr                  Decimal?   @db.Decimal(12, 6)
+  average_cpc_micros   BigInt?
+  average_cpm_micros   BigInt?
+  conversions          Decimal    @db.Decimal(16, 4)
+  conversions_value    Decimal    @db.Decimal(18, 4)
+  all_conversions      Decimal    @db.Decimal(16, 4)
+  video_views          BigInt
+  accounts             accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaign_geo_snapshots_account_id_accounts")
+  campaigns            campaigns  @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaign_geo_snapshots_campaign_id_campaigns")
+  sync_logs            sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_campaign_geo_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id], map: "ix_campaign_geo_snapshots_account_id")
+  @@index([campaign_id], map: "ix_campaign_geo_snapshots_campaign_id")
+  @@index([country_criterion_id], map: "ix_campaign_geo_snapshots_country_criterion_id")
+  @@index([snapshot_date], map: "ix_campaign_geo_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_campaign_geo_snapshots_sync_time")
+}
+
+model campaign_snapshots {
+  campaign_id           Int
+  status                String?    @db.VarChar(32)
+  budget_micros         BigInt?
+  bidding_strategy_type String?    @db.VarChar(64)
+  optimization_score    Float?
+  id                    Int        @id(map: "pk_campaign_snapshots") @default(autoincrement())
+  snapshot_date         DateTime   @db.Date
+  sync_time             DateTime   @default(now()) @db.Timestamptz(6)
+  account_id            Int
+  sync_log_id           Int?
+  impressions           BigInt
+  clicks                BigInt
+  interactions          BigInt
+  cost_micros           BigInt
+  ctr                   Decimal?   @db.Decimal(12, 6)
+  average_cpc_micros    BigInt?
+  average_cpm_micros    BigInt?
+  conversions           Decimal    @db.Decimal(16, 4)
+  conversions_value     Decimal    @db.Decimal(18, 4)
+  all_conversions       Decimal    @db.Decimal(16, 4)
+  video_views           BigInt
+  accounts              accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaign_snapshots_account_id_accounts")
+  campaigns             campaigns  @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaign_snapshots_campaign_id_campaigns")
+  sync_logs             sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_campaign_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id, snapshot_date], map: "ix_campaign_snapshots_account_date")
+  @@index([account_id], map: "ix_campaign_snapshots_account_id")
+  @@index([campaign_id, snapshot_date], map: "ix_campaign_snapshots_campaign_date")
+  @@index([campaign_id], map: "ix_campaign_snapshots_campaign_id")
+  @@index([snapshot_date], map: "ix_campaign_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_campaign_snapshots_sync_time")
+}
+
+model campaigns {
+  account_id                   Int
+  campaign_id                  BigInt
+  name                         String?                     @db.VarChar(512)
+  status                       String?                     @db.VarChar(32)
+  serving_status               String?                     @db.VarChar(32)
+  advertising_channel_type     String?                     @db.VarChar(32)
+  advertising_channel_sub_type String?                     @db.VarChar(64)
+  bidding_strategy_type        String?                     @db.VarChar(64)
+  networks                     String?                     @db.VarChar(255)
+  start_date                   DateTime?                   @db.Date
+  end_date                     DateTime?                   @db.Date
+  optimization_score           Float?
+  budget_id                    BigInt?
+  id                           Int                         @id(map: "pk_campaigns") @default(autoincrement())
+  created_at                   DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                   DateTime                    @default(now()) @db.Timestamptz(6)
+  ad_copy_generations          ad_copy_generations[]
+  ad_group_snapshots           ad_group_snapshots[]
+  ad_groups                    ad_groups[]
+  ad_snapshots                 ad_snapshots[]
+  campaign_device_snapshots    campaign_device_snapshots[]
+  campaign_geo_snapshots       campaign_geo_snapshots[]
+  campaign_snapshots           campaign_snapshots[]
+  accounts                     accounts                    @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_campaigns_account_id_accounts")
+  keyword_snapshots            keyword_snapshots[]
+  recommendations              recommendations[]
+  search_term_snapshots        search_term_snapshots[]
+  search_terms                 search_terms[]
+
+  @@unique([account_id, campaign_id], map: "campaigns_account_campaign")
+  @@index([account_id], map: "ix_campaigns_account_id")
+  @@index([budget_id], map: "ix_campaigns_budget_id")
+  @@index([campaign_id], map: "ix_campaigns_campaign_id")
+}
+
+model keyword_snapshots {
+  keyword_id              Int
+  ad_group_id             Int
+  campaign_id             Int
+  match_type              String?    @db.VarChar(32)
+  status                  String?    @db.VarChar(32)
+  quality_score           Int?
+  expected_ctr            String?    @db.VarChar(32)
+  landing_page_experience String?    @db.VarChar(32)
+  ad_relevance            String?    @db.VarChar(32)
+  id                      Int        @id(map: "pk_keyword_snapshots") @default(autoincrement())
+  snapshot_date           DateTime   @db.Date
+  sync_time               DateTime   @default(now()) @db.Timestamptz(6)
+  account_id              Int
+  sync_log_id             Int?
+  impressions             BigInt
+  clicks                  BigInt
+  interactions            BigInt
+  cost_micros             BigInt
+  ctr                     Decimal?   @db.Decimal(12, 6)
+  average_cpc_micros      BigInt?
+  average_cpm_micros      BigInt?
+  conversions             Decimal    @db.Decimal(16, 4)
+  conversions_value       Decimal    @db.Decimal(18, 4)
+  all_conversions         Decimal    @db.Decimal(16, 4)
+  video_views             BigInt
+  accounts                accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_keyword_snapshots_account_id_accounts")
+  ad_groups               ad_groups  @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_keyword_snapshots_ad_group_id_ad_groups")
+  campaigns               campaigns  @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_keyword_snapshots_campaign_id_campaigns")
+  keywords                keywords   @relation(fields: [keyword_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_keyword_snapshots_keyword_id_keywords")
+  sync_logs               sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_keyword_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id, snapshot_date], map: "ix_keyword_snapshots_account_date")
+  @@index([account_id], map: "ix_keyword_snapshots_account_id")
+  @@index([ad_group_id], map: "ix_keyword_snapshots_ad_group_id")
+  @@index([campaign_id], map: "ix_keyword_snapshots_campaign_id")
+  @@index([keyword_id, snapshot_date], map: "ix_keyword_snapshots_keyword_date")
+  @@index([keyword_id], map: "ix_keyword_snapshots_keyword_id")
+  @@index([snapshot_date], map: "ix_keyword_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_keyword_snapshots_sync_time")
+}
+
+model keywords {
+  account_id        Int
+  ad_group_id       Int
+  criterion_id      BigInt
+  text              String?             @db.VarChar(1024)
+  match_type        String?             @db.VarChar(32)
+  status            String?             @db.VarChar(32)
+  cpc_bid_micros    BigInt?
+  id                Int                 @id(map: "pk_keywords") @default(autoincrement())
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  keyword_snapshots keyword_snapshots[]
+  accounts          accounts            @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_keywords_account_id_accounts")
+  ad_groups         ad_groups           @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_keywords_ad_group_id_ad_groups")
+
+  @@unique([ad_group_id, criterion_id], map: "keywords_adgroup_criterion")
+  @@index([account_id], map: "ix_keywords_account_id")
+  @@index([ad_group_id], map: "ix_keywords_ad_group_id")
+  @@index([criterion_id], map: "ix_keywords_criterion_id")
+  @@index([text], map: "ix_keywords_text")
+}
+
+model recommendations {
+  resource_name                String     @db.VarChar(512)
+  recommendation_type          String?    @db.VarChar(64)
+  campaign_id                  Int?
+  campaign_google_id           BigInt?
+  impact_base_cost_micros      BigInt?
+  impact_potential_cost_micros BigInt?
+  impact_base_clicks           Float?
+  impact_potential_clicks      Float?
+  impact_base_conversions      Float?
+  impact_potential_conversions Float?
+  dismissed                    Boolean?
+  details                      String?
+  id                           Int        @id(map: "pk_recommendations") @default(autoincrement())
+  snapshot_date                DateTime   @db.Date
+  sync_time                    DateTime   @default(now()) @db.Timestamptz(6)
+  account_id                   Int
+  sync_log_id                  Int?
+  accounts                     accounts   @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_recommendations_account_id_accounts")
+  campaigns                    campaigns? @relation(fields: [campaign_id], references: [id], onUpdate: NoAction, map: "fk_recommendations_campaign_id_campaigns")
+  sync_logs                    sync_logs? @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_recommendations_sync_log_id_sync_logs")
+
+  @@index([account_id], map: "ix_recommendations_account_id")
+  @@index([campaign_id], map: "ix_recommendations_campaign_id")
+  @@index([recommendation_type], map: "ix_recommendations_recommendation_type")
+  @@index([resource_name], map: "ix_recommendations_resource_name")
+  @@index([snapshot_date], map: "ix_recommendations_snapshot_date")
+  @@index([sync_time], map: "ix_recommendations_sync_time")
+}
+
+model scorecard_snapshots {
+  campus              String               @db.VarChar(255)
+  account_id          Int?
+  generation_id       Int?
+  achieved_leads      Decimal?             @db.Decimal(16, 2)
+  achieved_cost       Decimal?             @db.Decimal(18, 2)
+  achieved_clicks     Int?
+  implementation_pct  Int?
+  expected_leads      Decimal?             @db.Decimal(16, 2)
+  target_leads        Int?
+  payload             Json?
+  id                  Int                  @id(map: "pk_scorecard_snapshots") @default(autoincrement())
+  created_at          DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime             @default(now()) @db.Timestamptz(6)
+  accounts            accounts?            @relation(fields: [account_id], references: [id], onUpdate: NoAction, map: "fk_scorecard_snapshots_account_id_accounts")
+  ad_copy_generations ad_copy_generations? @relation(fields: [generation_id], references: [id], onUpdate: NoAction, map: "fk_scorecard_snapshots_generation_id_ad_copy_generations")
+
+  @@index([account_id], map: "ix_scorecard_snapshots_account_id")
+  @@index([campus], map: "ix_scorecard_snapshots_campus")
+}
+
+model search_term_snapshots {
+  search_term_id     Int
+  campaign_id        Int
+  ad_group_id        Int
+  id                 Int          @id(map: "pk_search_term_snapshots") @default(autoincrement())
+  snapshot_date      DateTime     @db.Date
+  sync_time          DateTime     @default(now()) @db.Timestamptz(6)
+  account_id         Int
+  sync_log_id        Int?
+  impressions        BigInt
+  clicks             BigInt
+  interactions       BigInt
+  cost_micros        BigInt
+  ctr                Decimal?     @db.Decimal(12, 6)
+  average_cpc_micros BigInt?
+  average_cpm_micros BigInt?
+  conversions        Decimal      @db.Decimal(16, 4)
+  conversions_value  Decimal      @db.Decimal(18, 4)
+  all_conversions    Decimal      @db.Decimal(16, 4)
+  video_views        BigInt
+  accounts           accounts     @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_term_snapshots_account_id_accounts")
+  ad_groups          ad_groups    @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_term_snapshots_ad_group_id_ad_groups")
+  campaigns          campaigns    @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_term_snapshots_campaign_id_campaigns")
+  search_terms       search_terms @relation(fields: [search_term_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_term_snapshots_search_term_id_search_terms")
+  sync_logs          sync_logs?   @relation(fields: [sync_log_id], references: [id], onUpdate: NoAction, map: "fk_search_term_snapshots_sync_log_id_sync_logs")
+
+  @@index([account_id, snapshot_date], map: "ix_search_term_snapshots_account_date")
+  @@index([account_id], map: "ix_search_term_snapshots_account_id")
+  @@index([ad_group_id], map: "ix_search_term_snapshots_ad_group_id")
+  @@index([campaign_id], map: "ix_search_term_snapshots_campaign_id")
+  @@index([search_term_id], map: "ix_search_term_snapshots_search_term_id")
+  @@index([snapshot_date], map: "ix_search_term_snapshots_snapshot_date")
+  @@index([sync_time], map: "ix_search_term_snapshots_sync_time")
+}
+
+model search_terms {
+  account_id                   Int
+  campaign_id                  Int
+  ad_group_id                  Int
+  query                        String                  @db.VarChar(1024)
+  match_type                   String?                 @db.VarChar(32)
+  search_term_targeting_status String?                 @db.VarChar(32)
+  id                           Int                     @id(map: "pk_search_terms") @default(autoincrement())
+  created_at                   DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                   DateTime                @default(now()) @db.Timestamptz(6)
+  search_term_snapshots        search_term_snapshots[]
+  accounts                     accounts                @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_terms_account_id_accounts")
+  ad_groups                    ad_groups               @relation(fields: [ad_group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_terms_ad_group_id_ad_groups")
+  campaigns                    campaigns               @relation(fields: [campaign_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_search_terms_campaign_id_campaigns")
+
+  @@unique([ad_group_id, query, match_type], map: "search_terms_adgroup_query_match")
+  @@index([account_id], map: "ix_search_terms_account_id")
+  @@index([ad_group_id], map: "ix_search_terms_ad_group_id")
+  @@index([campaign_id], map: "ix_search_terms_campaign_id")
+  @@index([query], map: "ix_search_terms_query")
+}
+
+model sync_logs {
+  sync_type                 String                      @db.VarChar(16)
+  entity                    String                      @db.VarChar(48)
+  customer_id               String?                     @db.VarChar(20)
+  status                    String                      @db.VarChar(16)
+  started_at                DateTime                    @db.Timestamptz(6)
+  finished_at               DateTime?                   @db.Timestamptz(6)
+  duration_ms               BigInt?
+  rows_inserted             Int
+  rows_updated              Int
+  rows_failed               Int
+  attempt                   Int
+  error_message             String?
+  details                   Json?
+  id                        Int                         @id(map: "pk_sync_logs") @default(autoincrement())
+  ad_group_snapshots        ad_group_snapshots[]
+  ad_snapshots              ad_snapshots[]
+  budget_snapshots          budget_snapshots[]
+  campaign_device_snapshots campaign_device_snapshots[]
+  campaign_geo_snapshots    campaign_geo_snapshots[]
+  campaign_snapshots        campaign_snapshots[]
+  keyword_snapshots         keyword_snapshots[]
+  recommendations           recommendations[]
+  search_term_snapshots     search_term_snapshots[]
+
+  @@index([customer_id], map: "ix_sync_logs_customer_id")
+  @@index([entity], map: "ix_sync_logs_entity")
+  @@index([started_at], map: "ix_sync_logs_started_at")
+  @@index([status], map: "ix_sync_logs_status")
+  @@index([sync_type], map: "ix_sync_logs_sync_type")
+}
+
+model user_accounts {
+  user_id    Int
+  account_id Int
+  id         Int      @id(map: "pk_user_accounts") @default(autoincrement())
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  accounts   accounts @relation(fields: [account_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_accounts_account_id_accounts")
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_accounts_user_id_users")
+
+  @@unique([user_id, account_id], map: "user_accounts_user_account")
+  @@index([account_id], map: "ix_user_accounts_account_id")
+  @@index([user_id], map: "ix_user_accounts_user_id")
+}
+
+model users {
+  email                                                            String                @unique(map: "ix_users_email") @db.VarChar(320)
+  full_name                                                        String?               @db.VarChar(255)
+  role                                                             String                @db.VarChar(32)
+  hashed_password                                                  String?               @db.VarChar(255)
+  is_active                                                        Boolean
+  google_sub                                                       String?               @unique(map: "ix_users_google_sub") @db.VarChar(255)
+  picture                                                          String?               @db.VarChar(1024)
+  last_login_at                                                    DateTime?             @db.Timestamptz(6)
+  id                                                               Int                   @id(map: "pk_users") @default(autoincrement())
+  created_at                                                       DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at                                                       DateTime              @default(now()) @db.Timestamptz(6)
+  ad_copy_generations_ad_copy_generations_owner_user_idTousers     ad_copy_generations[] @relation("ad_copy_generations_owner_user_idTousers")
+  ad_copy_generations_ad_copy_generations_submitter_user_idTousers ad_copy_generations[] @relation("ad_copy_generations_submitter_user_idTousers")
+  user_accounts                                                    user_accounts[]
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRM layer — everything below is owned by google-ads-crm.
+//
+// The 28 models above are introspected from the Google Ads Intelligence schema
+// and are owned by that project's Alembic migrations. This app READS them and
+// writes only through the sync engine, which reproduces the same
+// delete-window-then-insert contract. Every table added here carries a `crm_`
+// prefix so ownership is obvious in psql and the two migration histories can
+// never collide.
+// ═══════════════════════════════════════════════════════════════════════════
+
+enum AdRequestStatus {
+  DRAFT
+  SUBMITTED
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  IN_PROGRESS
+  READY
+  LIVE
+  COMPLETED
+}
+
+enum CampaignObjective {
+  LEAD_GENERATION
+  WEBSITE_TRAFFIC
+  BRAND_AWARENESS
+  APP_PROMOTION
+  SALES
+  LOCAL_VISITS
+}
+
+enum AdRequestEventType {
+  CREATED
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+  RESUBMITTED
+  ASSIGNED
+  STATUS_CHANGED
+  COMMENT
+  AD_COPY_GENERATED
+  LANDING_SCORED
+  CAMPAIGN_LINKED
+}
+
+enum CrmNotificationType {
+  REQUEST_SUBMITTED
+  REQUEST_APPROVED
+  REQUEST_REJECTED
+  REQUEST_CHANGES_REQUESTED
+  REQUEST_ASSIGNED
+  REQUEST_COMMENTED
+  REQUEST_STATUS_CHANGED
+}
+
+enum CrmAuditAction {
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+  USER_CREATED
+  USER_UPDATED
+  USER_ACTIVATED
+  USER_DEACTIVATED
+  ROLE_CREATED
+  ROLE_UPDATED
+  ROLE_CLONED
+  ROLE_DELETED
+  PERMISSION_CHANGED
+  ACCOUNT_SCOPE_CHANGED
+  REQUEST_CREATED
+  REQUEST_SUBMITTED
+  REQUEST_APPROVED
+  REQUEST_REJECTED
+  REQUEST_CHANGES_REQUESTED
+  REQUEST_STATUS_CHANGED
+  AI_COPY_GENERATED
+  LANDING_PAGE_SCORED
+  DATA_EXPORTED
+  SYNC_TRIGGERED
+  INTEGRATION_TESTED
+}
+
+/// A role is a named bundle of permission toggles plus an account scope.
+/// Seeded roles carry `is_system` and cannot be deleted; a role with users
+/// assigned cannot be deleted either (enforced in the API).
+model CrmRole {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String   @unique
+  description  String?
+  /// Seeded by prisma/seed.ts. Blocks deletion and renaming of the slug.
+  isSystem     Boolean  @default(false) @map("is_system")
+  /// Short-circuits every permission check to `true`, the way Counselling CRM
+  /// treats SUPER_ADMIN. Exactly one seeded role carries it.
+  isSuperAdmin Boolean  @default(false) @map("is_super_admin")
+  /// When false, the role only sees the accounts listed in `accountScopes`.
+  allAccounts  Boolean  @default(true) @map("all_accounts")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  permissions   CrmRolePermission[]
+  accountScopes CrmRoleAccount[]
+  users         CrmUser[]
+
+  @@map("crm_roles")
+}
+
+/// One row per (role, feature). Mirrors Counselling CRM's `Permission` table:
+/// a missing row falls back to the role's seeded default rather than to false.
+model CrmRolePermission {
+  id      String  @id @default(cuid())
+  roleId  String  @map("role_id")
+  /// `"<MODULE>:<ACTION>"` — see lib/rbac/features.ts.
+  feature String
+  allowed Boolean @default(false)
+
+  role CrmRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, feature], map: "crm_role_permissions_role_feature")
+  @@index([roleId])
+  @@map("crm_role_permissions")
+}
+
+/// Account-level scoping for a role. Only consulted when `allAccounts = false`.
+model CrmRoleAccount {
+  roleId    String @map("role_id")
+  accountId Int    @map("account_id")
+
+  role    CrmRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  account accounts @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, accountId])
+  @@index([accountId])
+  @@map("crm_role_accounts")
+}
+
+model CrmUser {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  /// bcrypt hash — never a plaintext password, never returned by any API.
+  password           String
+  roleId             String    @map("role_id")
+  isActive           Boolean   @default(true) @map("is_active")
+  /// Set for the seeded admin and after any admin-driven reset; the dashboard
+  /// redirects to /change-password until it clears.
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  /// Per-user override of the role's account scope. When false, the user sees
+  /// only `accountScopes`; when true, the role's scope applies.
+  allAccounts        Boolean   @default(true) @map("all_accounts")
+  lastLoginAt        DateTime? @map("last_login_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  role          CrmRole          @relation(fields: [roleId], references: [id])
+  accountScopes CrmUserAccount[]
+
+  requestsCreated  CrmAdRequest[]      @relation("requestCreatedBy")
+  requestsAssigned CrmAdRequest[]      @relation("requestAssignedTo")
+  events           CrmAdRequestEvent[]
+  adCopyVersions   CrmAdCopyVersion[]
+  landingScores    CrmLandingScore[]
+  notifications    CrmNotification[]
+  auditLogs        CrmAuditLog[]
+
+  @@index([roleId])
+  @@map("crm_users")
+}
+
+/// Per-user account scope. Only consulted when the user's `allAccounts = false`.
+model CrmUserAccount {
+  userId    String @map("user_id")
+  accountId Int    @map("account_id")
+
+  user    CrmUser  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account accounts @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([userId, accountId])
+  @@index([accountId])
+  @@map("crm_user_accounts")
+}
+
+/// The Ad Request: the unit of work that moves Operations → Manager → Ads team.
+model CrmAdRequest {
+  id        String @id @default(cuid())
+  /// Human-facing sequential reference, e.g. `AR-0042`.
+  reference String @unique
+
+  status    AdRequestStatus   @default(DRAFT)
+  objective CampaignObjective @default(LEAD_GENERATION)
+
+  title     String
+  /// The Google Ads account this request targets (accounts.id).
+  accountId Int?   @map("account_id")
+
+  productService String    @map("product_service")
+  targetAudience String    @map("target_audience")
+  location       String
+  budget         Decimal   @db.Decimal(14, 2)
+  startDate      DateTime  @map("start_date") @db.Date
+  endDate        DateTime? @map("end_date") @db.Date
+  landingPageUrl String    @map("landing_page_url")
+  usps           String?
+  /// Free-text, one keyword per line — optional per the brief.
+  keywords       String?
+  notes          String?
+
+  /// Filled by the Ads team once the campaign exists in Google Ads.
+  linkedCampaignId String? @map("linked_campaign_id")
+
+  /// Mandatory on REJECTED; also carries the Request-Changes comment.
+  decisionReason String?   @map("decision_reason")
+  submittedAt    DateTime? @map("submitted_at")
+  decidedAt      DateTime? @map("decided_at")
+  completedAt    DateTime? @map("completed_at")
+
+  createdById  String  @map("created_by_id")
+  assignedToId String? @map("assigned_to_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  createdBy  CrmUser   @relation("requestCreatedBy", fields: [createdById], references: [id])
+  assignedTo CrmUser?  @relation("requestAssignedTo", fields: [assignedToId], references: [id])
+  account    accounts? @relation(fields: [accountId], references: [id])
+
+  events         CrmAdRequestEvent[]
+  attachments    CrmAdRequestAttachment[]
+  adCopyVersions CrmAdCopyVersion[]
+  landingScores  CrmLandingScore[]
+  notifications  CrmNotification[]
+
+  @@index([status])
+  @@index([accountId])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@index([createdAt])
+  @@map("crm_ad_requests")
+}
+
+/// The timeline / activity feed under a request. Comments and transitions share
+/// one table so the feed is a single ordered read.
+model CrmAdRequestEvent {
+  id         String             @id @default(cuid())
+  requestId  String             @map("request_id")
+  type       AdRequestEventType
+  /// Human-readable summary rendered in the feed.
+  message    String
+  /// Transition endpoints, when the event is a status change.
+  fromStatus AdRequestStatus?   @map("from_status")
+  toStatus   AdRequestStatus?   @map("to_status")
+  actorId    String?            @map("actor_id")
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  request CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  actor   CrmUser?     @relation(fields: [actorId], references: [id])
+
+  @@index([requestId, createdAt])
+  @@map("crm_ad_request_events")
+}
+
+model CrmAdRequestAttachment {
+  id         String   @id @default(cuid())
+  requestId  String   @map("request_id")
+  filename   String
+  mimeType   String   @map("mime_type")
+  sizeBytes  Int      @map("size_bytes")
+  /// Path under ./storage — never a browser-reachable path.
+  storageKey String   @map("storage_key")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  request CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+  @@map("crm_ad_request_attachments")
+}
+
+/// One saved generation of RSA copy. Multiple versions per request; at most one
+/// carries `isFinal` (enforced in the service).
+model CrmAdCopyVersion {
+  id        String @id @default(cuid())
+  requestId String @map("request_id")
+  /// 1-based, per request.
+  version   Int
+  tone      String
+
+  /// `{ text, characters }[]` — validated against the 30-character headline cap.
+  headlines    Json
+  /// `{ text, characters }[]` — validated against the 90-character cap.
+  descriptions Json
+  /// Validator output: character-limit failures, duplicate detection, coverage.
+  validation   Json?
+  /// "gemini" | "deterministic" — which engine produced this version.
+  backend      String
+
+  isFinal     Boolean  @default(false) @map("is_final")
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  request   CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  createdBy CrmUser      @relation(fields: [createdById], references: [id])
+
+  @@unique([requestId, version])
+  @@index([requestId])
+  @@map("crm_ad_copy_versions")
+}
+
+/// A landing-page score run. History is kept per request so the Ads team can
+/// see whether a fix moved the number.
+model CrmLandingScore {
+  id        String  @id @default(cuid())
+  requestId String? @map("request_id")
+  url       String
+
+  score     Int
+  grade     String
+  pageType  String @map("page_type")
+  /// Weighted checks that passed, and the maximum available.
+  passed    Int
+  maxPoints Int    @map("max_points")
+
+  /// `{ item, ok, weight, category }[]`
+  checks      Json
+  /// Per-category sub-scores: Content / Tracking / Links.
+  categories  Json
+  /// Ordered improvement suggestions, heaviest lever first.
+  suggestions Json
+  /// Detected tags: GTM, GA4, Google Ads conversion, Meta Pixel, consent.
+  tracking    Json?
+  /// Broken links found and external links that leak the visitor away.
+  links       Json?
+
+  createdById String   @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  request   CrmAdRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  createdBy CrmUser       @relation(fields: [createdById], references: [id])
+
+  @@index([requestId, createdAt])
+  @@map("crm_landing_scores")
+}
+
+model CrmNotification {
+  id        String              @id @default(cuid())
+  userId    String              @map("user_id")
+  type      CrmNotificationType
+  title     String
+  body      String
+  /// Where clicking the notification takes the user.
+  link      String?
+  requestId String?             @map("request_id")
+  readAt    DateTime?           @map("read_at")
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  user    CrmUser       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  request CrmAdRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("crm_notifications")
+}
+
+model CrmAuditLog {
+  id          String         @id @default(cuid())
+  actorId     String?        @map("actor_id")
+  /// Denormalised so the trail survives the user being deleted.
+  actorEmail  String?        @map("actor_email")
+  action      CrmAuditAction
+  targetType  String?        @map("target_type")
+  targetId    String?        @map("target_id")
+  description String
+  /// Before/after values for permission and role changes.
+  metadata    Json?
+  ipAddress   String?        @map("ip_address")
+  createdAt   DateTime       @default(now()) @map("created_at")
+
+  actor CrmUser? @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("crm_audit_logs")
+}
