@@ -163,21 +163,27 @@ async function replaceWindow(
   return rows.length;
 }
 
-/** Map a fetched dict onto the shared snapshot columns. */
-function snapshotBase(
-  accountId: number,
-  syncLogId: number,
-  row: { snapshot_date: Date | null }
-): Record<string, unknown> {
+/**
+ * Map a fetched dict onto the shared snapshot columns.
+ *
+ * The return type is inferred rather than widened to
+ * `Record<string, unknown>`, and the date arrives already narrowed to `Date`.
+ * Both matter: a precise type here is what lets each caller's snapshot literal
+ * end in `satisfies Prisma.<table>UncheckedCreateInput`, which is the only
+ * thing standing between a mistyped column and a raw INSERT that fails at
+ * runtime against every account. `search_term_snapshots` was being handed a
+ * `match_type` it has no column for, and nothing caught it until the query ran.
+ */
+function snapshotBase(accountId: number, syncLogId: number, snapshotDate: Date) {
   return {
-    snapshot_date: row.snapshot_date,
+    snapshot_date: snapshotDate,
     sync_time: new Date(),
     account_id: accountId,
     sync_log_id: syncLogId,
   };
 }
 
-function metricColumns(m: reports.Metrics): Record<string, unknown> {
+function metricColumns(m: reports.Metrics) {
   return {
     impressions: m.impressions,
     clicks: m.clicks,
@@ -405,13 +411,13 @@ async function syncCampaignsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         if (pk === null || !m.snapshot_date) return null;
         return {
           campaign_id: pk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           status: m.status,
           budget_micros: m.budget_micros,
           bidding_strategy_type: m.bidding_strategy_type,
           optimization_score: m.optimization_score,
           ...metricColumns(m),
-        };
+        } satisfies Prisma.campaign_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -421,10 +427,10 @@ async function syncCampaignsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         if (pk === undefined || !m.snapshot_date) return null;
         return {
           campaign_id: pk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           device: m.device,
           ...metricColumns(m),
-        };
+        } satisfies Prisma.campaign_device_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -434,11 +440,11 @@ async function syncCampaignsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         if (pk === undefined || !m.snapshot_date) return null;
         return {
           campaign_id: pk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           country_criterion_id: m.country_criterion_id,
           location_name: m.location_name,
           ...metricColumns(m),
-        };
+        } satisfies Prisma.campaign_geo_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -498,11 +504,11 @@ async function syncAdGroupsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         return {
           ad_group_id: gpk,
           campaign_id: cpk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           status: m.status,
           cpc_bid_micros: m.cpc_bid_micros,
           ...metricColumns(m),
-        };
+        } satisfies Prisma.ad_group_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -565,11 +571,11 @@ async function syncAdsFor(ctx: EntitySyncContext): Promise<EntityResult> {
           ad_id: apk,
           ad_group_id: gpk,
           campaign_id: cpk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           status: m.status,
           approval_status: m.approval_status,
           ...metricColumns(m),
-        };
+        } satisfies Prisma.ad_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -654,7 +660,7 @@ async function syncKeywordsFor(ctx: EntitySyncContext): Promise<EntityResult> {
           keyword_id: kpk,
           ad_group_id: gpk,
           campaign_id: cpk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           match_type: m.match_type,
           status: m.status,
           quality_score: m.quality_score,
@@ -662,7 +668,7 @@ async function syncKeywordsFor(ctx: EntitySyncContext): Promise<EntityResult> {
           ad_relevance: m.ad_relevance,
           landing_page_experience: m.landing_page_experience,
           ...metricColumns(m),
-        };
+        } satisfies Prisma.keyword_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -744,10 +750,13 @@ async function syncSearchTermsFor(ctx: EntitySyncContext): Promise<EntityResult>
           search_term_id: tpk,
           ad_group_id: gpk,
           campaign_id: cpk,
-          ...snapshotBase(ctx.accountId, logId, m),
-          match_type: m.match_type,
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
+          // No match_type here: search_term_snapshots has no such column. The
+          // match type is a property of the term itself and is written on the
+          // search_terms dimension row above, which is where the source app
+          // puts it too.
           ...metricColumns(m),
-        };
+        } satisfies Prisma.search_term_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
@@ -794,12 +803,12 @@ async function syncBudgetsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         if (bpk === undefined || !m.snapshot_date) return null;
         return {
           budget_id: bpk,
-          ...snapshotBase(ctx.accountId, logId, m),
+          ...snapshotBase(ctx.accountId, logId, m.snapshot_date),
           amount_micros: m.amount_micros,
           spend_micros: m.spend_micros,
           utilization: m.utilization,
           delivery_method: m.delivery_method,
-        };
+        } satisfies Prisma.budget_snapshotsUncheckedCreateInput;
       })
       .filter((r): r is NonNullable<typeof r> => r !== null);
 
