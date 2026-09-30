@@ -13,12 +13,36 @@ import type { Scope } from './ops/metrics';
  * account restriction folded in, so a handler cannot forget to apply it —
  * it has to go out of its way to query without one.
  */
-export const filterSchema = z.object({
-  accountId: z.coerce.number().int().positive().optional(),
-  days: z.coerce.number().int().min(1).max(3650).optional(),
-  start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-});
+/** The widest window any endpoint will serve, matching the `days` cap. */
+export const MAX_WINDOW_DAYS = 3650;
+
+export const filterSchema = z
+  .object({
+    accountId: z.coerce.number().int().positive().optional(),
+    days: z.coerce.number().int().min(1).max(MAX_WINDOW_DAYS).optional(),
+    start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  })
+  // `days` was bounded but an explicit range was not, so start/end could ask
+  // for a span of decades: a wide scan, and a densified series of tens of
+  // thousands of points handed to a chart.
+  .refine((v) => (v.start === undefined) === (v.end === undefined), {
+    message: 'Provide both start and end, or neither.',
+    path: ['start'],
+  })
+  .refine((v) => !v.start || !v.end || v.start <= v.end, {
+    message: 'start must not be after end.',
+    path: ['start'],
+  })
+  .refine(
+    (v) => {
+      if (!v.start || !v.end) return true;
+      const span =
+        (Date.parse(`${v.end}T00:00:00Z`) - Date.parse(`${v.start}T00:00:00Z`)) / 86_400_000 + 1;
+      return span <= MAX_WINDOW_DAYS;
+    },
+    { message: `A date range cannot exceed ${MAX_WINDOW_DAYS} days.`, path: ['start'] }
+  );
 
 export type ResolvedFilters = {
   start: Date;
