@@ -60,7 +60,11 @@ function bool(key: string, fallback: boolean): boolean {
 }
 
 function num(key: string, fallback: number): number {
-  const v = Number(str(key));
+  // An unset variable must fall back, not become 0 — `Number('')` is 0, which
+  // would silently turn an absent timeout into "abort immediately".
+  const raw = str(key);
+  if (!raw) return fallback;
+  const v = Number(raw);
   return Number.isFinite(v) ? v : fallback;
 }
 
