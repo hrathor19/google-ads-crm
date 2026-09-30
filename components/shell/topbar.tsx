@@ -69,7 +69,7 @@ function AccountSwitcher() {
         <Button
           variant="outline"
           size="sm"
-          className="max-w-[9rem] justify-between gap-1.5 sm:max-w-[14rem]"
+          className="min-w-0 flex-1 justify-between gap-1.5 sm:max-w-[14rem] sm:flex-none"
           aria-label="Filter by account"
         >
           <span className="truncate">
@@ -142,7 +142,7 @@ function DateRangePicker() {
         <Button
           variant="outline"
           size="sm"
-          className="max-w-[9rem] justify-between gap-1.5 sm:max-w-none"
+          className="min-w-0 flex-1 justify-between gap-1.5 sm:flex-none"
           aria-label="Change the date range"
         >
           <Calendar className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden="true" />
@@ -447,18 +447,37 @@ function MobileDrawer() {
   );
 }
 
+/**
+ * The top bar.
+ *
+ * Below `sm` the two filter controls move to their own row: an account
+ * switcher, a date picker and four icon buttons do not fit across 360px, and
+ * squeezing them produces a header that scrolls sideways. From `sm` up
+ * everything sits on one line.
+ */
 export function TopBar() {
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-4">
-      <MobileDrawer />
+    <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div className="flex h-14 items-center gap-2 px-3 sm:px-4">
+        <MobileDrawer />
 
-      <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+        {/* From sm up the filters sit inline with the actions. */}
+        <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <div className="hidden min-w-0 items-center gap-2 sm:flex">
+            <AccountSwitcher />
+            <DateRangePicker />
+          </div>
+          <RefreshButton />
+          <NotificationBell />
+          <ThemeToggle />
+          <UserMenu />
+        </div>
+      </div>
+
+      {/* Below sm they get a row of their own, each taking half the width. */}
+      <div className="flex items-center gap-2 border-t px-3 py-2 sm:hidden">
         <AccountSwitcher />
         <DateRangePicker />
-        <RefreshButton />
-        <NotificationBell />
-        <ThemeToggle />
-        <UserMenu />
       </div>
     </header>
   );

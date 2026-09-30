@@ -202,7 +202,7 @@ export default function DashboardPage() {
           </Card>
 
           {/* Top / bottom campaigns */}
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             <CampaignList
               title="Top campaigns by spend"
               description="Where the money went this period."
@@ -238,14 +238,17 @@ function CampaignList({
   canSeeMoney: boolean;
 }) {
   return (
-    <Card>
+    // min-w-0 is load-bearing: without it this card is a grid item with
+    // min-width:auto, and the truncating campaign names below set its
+    // min-content width to the longest name rather than ellipsing.
+    <Card className="min-w-0">
       <CardHeader className="flex-row items-start justify-between gap-2 space-y-0 pb-2">
-        <div>
+        <div className="min-w-0">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Icon className="h-4 w-4 opacity-70" aria-hidden="true" />
-            {title}
+            <Icon className="h-4 w-4 shrink-0 opacity-70" aria-hidden="true" />
+            <span className="truncate">{title}</span>
           </CardTitle>
-          <CardDescription>{description}</CardDescription>
+          <CardDescription className="truncate">{description}</CardDescription>
         </div>
         <Button asChild variant="ghost" size="sm" className="shrink-0">
           <Link href="/dashboard/campaigns">

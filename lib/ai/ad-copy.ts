@@ -232,76 +232,125 @@ export function titlecase(s: string): string {
 }
 
 /**
+ * Shorten to `limit` at a word boundary, without a trailing ellipsis.
+ *
+ * Google counts characters, so an over-length asset is rejected outright —
+ * a clean shorter phrase beats a truncated one with a "…" burning a character.
+ */
+function clamp(text: string, limit: number): string {
+  const t = text.replace(/\s+/g, ' ').trim();
+  if (t.length <= limit) return t;
+  const cut = t.slice(0, limit + 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > limit * 0.5 ? cut.slice(0, lastSpace) : t.slice(0, limit)).trim();
+}
+
+/**
  * Template-driven copy built from the brief and the page facts.
  *
  * This is the floor, not the goal: it runs when no Gemini key is configured or
  * the model call fails, so the Ads team always leaves the screen with
  * something valid to edit rather than an error.
+ *
+ * Every candidate is built from already-shortened components and then filtered
+ * through the real limit, and the pool is deliberately larger than the target
+ * so that dropping the over-length ones still clears Google's minimum of three
+ * headlines and two descriptions.
  */
 export function generateDeterministic(
   brief: AdCopyBrief,
   facts: LandingFacts | null
 ): { headlines: Asset[]; descriptions: Asset[] } {
-  const brand = titlecase((brief.brand || brief.product).slice(0, 24));
-  const product = titlecase(brief.product.slice(0, 24));
-  const place = titlecase(brief.location.split(',')[0]!.trim().slice(0, 18));
-  const kw = (brief.keywords ?? []).map((k) => titlecase(k)).filter((k) => k.length <= 24);
+  // Headlines are 30 characters, so the components have to be short before
+  // they are combined — "MBA" not "Two-year full-time MBA programme".
+  const productFull = titlecase(brief.product);
+  const product = clamp(productFull, 26);
+  const productShort = clamp(productFull, 16);
+  const brandRaw = brief.brand ? titlecase(brief.brand) : null;
+  // With no account attached the brand would fall back to the product, which
+  // reads as "MBA at MBA"; better to drop the clause entirely.
+  const brand = brandRaw && brandRaw.toLowerCase() !== productFull.toLowerCase() ? clamp(brandRaw, 20) : null;
+  const brandShort = brand ? clamp(brand, 14) : null;
+  const place = clamp(titlecase(brief.location.split(',')[0]!.trim()), 14);
+  const subject = brand ?? product;
+  const subjectShort = brandShort ?? productShort;
+
+  const kw = (brief.keywords ?? []).map((k) => titlecase(k)).filter((k) => k.length <= 28);
 
   const deadline = (facts?.deadlines ?? [])[0] ?? null;
   const hasFees = (facts?.fees ?? []).length > 0;
   const hasPlacements = (facts?.placements ?? []).length > 0;
   const hasAccred = (facts?.accreditations ?? []).length > 0;
   const hasScholarship = (facts?.scholarships ?? []).length > 0;
+  const hasCourses = (facts?.courses ?? []).length > 0;
 
   // Each candidate is emitted only when the fact behind it exists, so the
   // fallback stays as grounded as the model path.
   const headlineCandidates: Array<string | null> = [
-    `${product}`,
-    `${product} in ${place}`,
-    `${brand} — Apply Now`,
-    `Apply for ${product}`,
-    `${product}: Enquire Today`,
-    `${brand} Admissions Open`,
-    deadline ? 'Applications Closing Soon' : null,
-    hasFees ? 'See Full Fee Structure' : null,
+    product,
+    `${productShort} in ${place}`,
+    brand ? `${brand} Admissions` : null,
+    `Apply for ${productShort}`,
+    `${subjectShort}: Apply Now`,
+    brand ? `${brandShort} — Enquire Now` : null,
+    deadline ? 'Applications Close Soon' : null,
+    hasFees ? 'See the Full Fee Details' : null,
     hasScholarship ? 'Scholarships Available' : null,
     hasPlacements ? 'Strong Placement Record' : null,
     hasAccred ? 'Accredited Programme' : null,
-    `${place} Admissions 2026`,
-    'Get Course Details',
-    'Book a Free Counselling Call',
+    hasCourses ? 'Compare All Programmes' : null,
+    `${place} Admissions Open`,
+    'Get the Course Details',
+    'Book Free Counselling',
     'Download the Brochure',
-    kw[0] ?? null,
-    kw[1] ?? null,
-    kw[2] ?? null,
+    'Check Your Eligibility',
+    'Talk to an Advisor Today',
+    ...kw.slice(0, 4),
   ];
 
-  const audience = brief.targetAudience.toLowerCase().slice(0, 40);
+  // Descriptions get 90 characters — enough for two short sentences, not for
+  // a subject repeated twice.
+  const audience = brief.targetAudience.trim().toLowerCase();
+  const audienceShort = clamp(audience, 28);
+  const atBrand = brand ? ` at ${brand}` : '';
+
   const descriptionCandidates: Array<string | null> = [
-    `${product} at ${brand}. Built for ${audience}. Apply online in minutes.`,
+    clamp(`${product}${atBrand}. Built for ${audienceShort}. Apply online in minutes.`, D_MAX),
     hasFees
-      ? `See the full fee structure, eligibility and course details for ${product}. Enquire today.`
-      : `See eligibility, course details and how to apply for ${product}. Enquire today.`,
+      ? clamp(`See fees, eligibility and course details for ${product}. Enquire today.`, D_MAX)
+      : clamp(`See eligibility and course details for ${product}. Enquire today.`, D_MAX),
     hasPlacements
-      ? `${brand} in ${place}. Review the placement record and programme details, then apply.`
-      : `${brand} in ${place}. Review the programme details and apply online today.`,
+      ? clamp(`${subject} in ${place}. Review the placement record, then apply online.`, D_MAX)
+      : clamp(`${subject} in ${place}. Review the programme details and apply online.`, D_MAX),
     deadline
-      ? `Applications are closing soon. Secure your place on ${product} at ${brand} now.`
-      : `Talk to an advisor about ${product} at ${brand}. Free counselling, no obligation.`,
+      ? clamp(`Applications close soon. Secure your place on ${product} now.`, D_MAX)
+      : clamp(`Speak to an advisor about ${product}. Free counselling, no obligation.`, D_MAX),
+    hasScholarship
+      ? clamp(`Scholarships available on ${product}. Check what you qualify for today.`, D_MAX)
+      : null,
+    clamp(`Applying for ${product}? Get the details and start your application today.`, D_MAX),
+    clamp(`${product} in ${place}. Enquire now and get a call back from an advisor.`, D_MAX),
   ];
 
-  return {
-    headlines: collectAssets(
-      headlineCandidates.filter(Boolean).map((t) => ({ text: t, reason: 'Built from the brief and the landing page.' })),
-      H_MAX,
-      15
-    ),
-    descriptions: collectAssets(
-      descriptionCandidates.filter(Boolean).map((t) => ({ text: t, reason: 'Built from the brief and the landing page.' })),
-      D_MAX,
-      4
-    ),
-  };
+  const headlines = collectAssets(
+    headlineCandidates
+      .filter((t): t is string => Boolean(t))
+      // A component-level clamp can still overshoot once combined, so every
+      // candidate is clamped again at the real limit before it is considered.
+      .map((t) => ({ text: clamp(t, H_MAX), reason: 'Built from the brief and the landing page.' })),
+    H_MAX,
+    15
+  );
+
+  const descriptions = collectAssets(
+    descriptionCandidates
+      .filter((t): t is string => Boolean(t))
+      .map((t) => ({ text: clamp(t, D_MAX), reason: 'Built from the brief and the landing page.' })),
+    D_MAX,
+    4
+  );
+
+  return { headlines, descriptions };
 }
 
 // ─── Orchestrator ────────────────────────────────────────────────────────────
