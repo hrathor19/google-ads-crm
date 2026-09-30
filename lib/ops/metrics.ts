@@ -820,7 +820,11 @@ export async function keywordRollup(
     FROM keywords k
     JOIN ad_groups g ON g.id = k.ad_group_id
     JOIN campaigns c ON c.id = g.campaign_id
-    LEFT JOIN (
+    -- An inner join, matching the source's keyword_metrics: a keyword with no
+    -- snapshot in the window has no data, which is not the same as zero. A
+    -- LEFT JOIN here pads the list with thousands of never-served keywords and
+    -- makes "keywords with data" read far higher than the source reports.
+    JOIN (
       SELECT keyword_id,
              ROUND(AVG(quality_score))            AS quality_score,
              MAX(expected_ctr)                    AS expected_ctr,

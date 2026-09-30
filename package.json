@@ -19,7 +19,8 @@
     "db:studio": "prisma studio",
     "sync": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' scripts/sync.ts",
     "e2e": "node --conditions=react-server -r ./scripts/_runner.js scripts/e2e-check.ts",
-    "check:responsive": "node --conditions=react-server -r ./scripts/_runner.js scripts/responsive-check.ts"
+    "check:responsive": "node --conditions=react-server -r ./scripts/_runner.js scripts/responsive-check.ts",
+    "parity": "node --conditions=react-server -r ./scripts/_runner.js scripts/parity-compare.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
