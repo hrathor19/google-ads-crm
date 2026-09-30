@@ -113,6 +113,49 @@ const TEST_PASSWORD = 'E2ePassw0rdCheck';
  * These roles are disposable fixtures. Resetting them every run also means an
  * interrupted run cannot leave a half-configured role behind.
  */
+/**
+ * Minimal RFC 4180 reader.
+ *
+ * Splitting a row on commas is wrong the moment a value contains one: a
+ * campaign called "Maya Academy of Advanced Creativity, Bhopal" yields one
+ * cell too many and shifts every column after it, which made an earlier
+ * version of the export check report a leak that was not there.
+ */
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else quoted = false;
+      } else cell += ch;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') cell += ch;
+  }
+  if (cell !== '' || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((c) => c.trim() !== ''));
+}
+
 async function ensureRole(sourceSlug: string) {
   const def = SEED_ROLES.find((r) => r.slug === sourceSlug);
   if (!def) throw new Error(`no seeded role "${sourceSlug}" to model the fixture on`);
@@ -505,6 +548,79 @@ async function main() {
     ]) {
       check(`Audit recorded ${expected}`, actions.has(expected));
     }
+  }
+
+  // ── Export must redact money for a role that may export but not see it ───
+  //
+  // The 403 case above only proves a role without EXPORT is refused. It never
+  // exercises stripMoney, which is the path that matters for a role that is
+  // *meant* to export: the file must not carry spend the screen withholds.
+  {
+    const slug = 'e2e-exporter-no-money';
+    const role = await prisma.crmRole.upsert({
+      where: { slug },
+      create: {
+        slug,
+        name: 'E2E Exporter Without Financials',
+        description: 'Disposable fixture for the e2e suite.',
+        isSystem: false,
+        isSuperAdmin: false,
+        allAccounts: true,
+      },
+      update: {},
+    });
+    await prisma.crmRolePermission.deleteMany({ where: { roleId: role.id } });
+    await prisma.crmRolePermission.createMany({
+      data: ALL_FEATURES.map((feature) => ({
+        roleId: role.id,
+        feature,
+        // Everything needed to reach the export, and nothing that reveals money.
+        allowed: feature !== 'FINANCIALS:VIEW',
+      })),
+    });
+
+    const email = 'e2e.exporter-no-money@example.com';
+    const password = await bcrypt.hash(TEST_PASSWORD, 10);
+    await prisma.crmUser.upsert({
+      where: { email },
+      create: {
+        email,
+        name: 'E2E Exporter Without Financials',
+        password,
+        roleId: role.id,
+        isActive: true,
+        mustChangePassword: false,
+        allAccounts: true,
+      },
+      update: { password, roleId: role.id, isActive: true, mustChangePassword: false },
+    });
+
+    const exporter = new Session();
+    check('Exporter-without-financials can sign in', await exporter.login(email, TEST_PASSWORD));
+
+    const res = await exporter.fetch('/api/export?dataset=campaigns&days=30');
+    check('A role with EXPORT but not FINANCIALS gets its file', res.status === 200, `got ${res.status}`);
+
+    const csv = res.status === 200 ? await res.text() : '';
+    const table = parseCsv(csv);
+    const header = table[0] ?? [];
+    // Every money key stripMoney nulls, not just the three on the screen.
+    const moneyColumns = ['cost', 'avgCpc', 'costPerConversion', 'budget', 'amount', 'spend']
+      .map((c) => [c, header.indexOf(c)] as const)
+      .filter(([, i]) => i >= 0);
+    const rows = table.slice(1);
+    const leaked = rows.filter((cells) =>
+      moneyColumns.some(([, i]) => (cells[i] ?? '').trim() !== '')
+    );
+    check(
+      'The exported file carries no spend figures',
+      rows.length > 0 && moneyColumns.length > 0 && leaked.length === 0,
+      `${rows.length} row(s), ${leaked.length} with money, checked: ${moneyColumns.map(([c]) => c).join(', ') || 'no money columns found'}`
+    );
+
+    await prisma.crmUser.deleteMany({ where: { email } });
+    await prisma.crmRolePermission.deleteMany({ where: { roleId: role.id } });
+    await prisma.crmRole.deleteMany({ where: { slug } });
   }
 
   // ── A pending password change must gate the API, not just the pages ──────
