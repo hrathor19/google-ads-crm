@@ -15,6 +15,8 @@ export type RefDates = {
   latest: Date;
   /** The day before ("yesterday"). */
   prior: Date;
+  /** The first day any account has data for, or null when there is none. */
+  earliest: Date | null;
 };
 
 /** A UTC midnight Date for a `YYYY-MM-DD` day — snapshot_date is a bare DATE. */
@@ -47,11 +49,15 @@ export function isoDay(day: Date): string {
  * recent window, matching Google Ads.
  */
 export async function resolveRefDates(): Promise<RefDates> {
-  const row = await prisma.campaign_snapshots.aggregate({ _max: { snapshot_date: true } });
+  const row = await prisma.campaign_snapshots.aggregate({
+    _max: { snapshot_date: true },
+    _min: { snapshot_date: true },
+  });
   const latest = row._max.snapshot_date
     ? utcDay(row._max.snapshot_date)
     : addDays(utcDay(new Date()), -1);
-  return { latest, prior: addDays(latest, -1) };
+  const earliest = row._min.snapshot_date ? utcDay(row._min.snapshot_date) : null;
+  return { latest, prior: addDays(latest, -1), earliest };
 }
 
 /** Inclusive (start, end) window of `days` ending at `latest`. */
@@ -93,5 +99,12 @@ export async function resolveWindow(params: {
     return { refs, start: utcDay(params.start), end: utcDay(params.end) };
   }
   const { start, end } = windowOf(refs, params.days ?? 30);
-  return { refs, start, end };
+
+  // Clamp a preset that reaches past the data to the first day there is any.
+  // "All time" is a 10-year rolling window, so without this it reported a
+  // window starting in 2016 and compared it against 2006-2016 — dates with no
+  // possible meaning, and a previous-period row that looked like a real
+  // comparison rather than an absence.
+  const clamped = refs.earliest && start < refs.earliest ? refs.earliest : start;
+  return { refs, start: clamped, end };
 }

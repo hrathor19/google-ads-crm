@@ -13,7 +13,14 @@ import {
   deriveAvgCpc,
   microsToCurrency,
 } from '@/lib/ops/metrics';
-import { resolveRefDates, utcDay, isoDay, previousWindow, addDays } from '@/lib/ops/dates';
+import {
+  resolveRefDates,
+  resolveWindow,
+  utcDay,
+  isoDay,
+  previousWindow,
+  addDays,
+} from '@/lib/ops/dates';
 
 /**
  * Metric parity.
@@ -73,6 +80,44 @@ describe('date windows', () => {
     const prev = previousWindow(start, end);
     const days = (a: Date, b: Date) => Math.round((b.getTime() - a.getTime()) / 86_400_000) + 1;
     expect(days(prev.start, prev.end)).toBe(days(start, end));
+  });
+});
+
+describe('window clamping', () => {
+  it('reports the earliest day there is data for', async () => {
+    const refs = await resolveRefDates();
+    const [raw] = await prisma.$queryRaw<Array<{ d: Date | null }>>`
+      SELECT MIN(snapshot_date) AS d FROM campaign_snapshots
+    `;
+    if (raw!.d === null) {
+      expect(refs.earliest).toBeNull();
+      return;
+    }
+    expect(isoDay(refs.earliest!)).toBe(isoDay(utcDay(raw!.d)));
+  });
+
+  it('clamps a window that reaches past the data to the first day of it', async () => {
+    // "All time" is a 10-year rolling preset. Unclamped it produced a window
+    // starting a decade back and a previous period a decade before THAT —
+    // dates with no meaning, presented as if they were a real comparison.
+    const refs = await resolveRefDates();
+    const { start } = await resolveWindow({ days: 3650 });
+    if (refs.earliest) {
+      expect(isoDay(start)).toBe(isoDay(refs.earliest));
+      expect(start.getTime()).toBeGreaterThanOrEqual(refs.earliest.getTime());
+    }
+  });
+
+  it('leaves a window that sits inside the data alone', async () => {
+    const refs = await resolveRefDates();
+    const { start } = await resolveWindow({ days: 7 });
+    expect(isoDay(start)).toBe(isoDay(addDays(refs.latest, -6)));
+  });
+
+  it('never clamps an explicit range — the caller asked for those dates', async () => {
+    const { start, end } = await resolveWindow({ start: '2020-01-01', end: '2020-01-31' });
+    expect(isoDay(start)).toBe('2020-01-01');
+    expect(isoDay(end)).toBe('2020-01-31');
   });
 });
 
