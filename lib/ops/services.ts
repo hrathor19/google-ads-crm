@@ -47,6 +47,44 @@ import {
  * and returns a plain object ready to serialise.
  */
 
+/**
+ * Fill days with no rows as explicit zeros.
+ *
+ * A day with no snapshot means nothing served, which is zero — but a sparse
+ * series makes a line chart draw a straight diagonal across the gap, which
+ * reads as steady activity through a period that had none. Two months of
+ * nothing should look like two months of nothing.
+ *
+ * Deliberately NOT done in `dailySeries`: that function is held to parity with
+ * the source project's `daily_series`, which returns only days that have rows.
+ * Densifying is presentation, so it happens here.
+ */
+function densifySeries(
+  series: Awaited<ReturnType<typeof dailySeries>>,
+  start: Date,
+  end: Date
+): Awaited<ReturnType<typeof dailySeries>> {
+  const byDay = new Map(series.map((p) => [p.date, p]));
+  const out: typeof series = [];
+  for (let d = new Date(start); d <= end; d = addDays(d, 1)) {
+    const key = isoDay(d);
+    out.push(
+      byDay.get(key) ?? {
+        date: key,
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        conversions: 0,
+        // Not zero: with no impressions there is no CTR to report, and the
+        // chart should leave that point out rather than plot a false 0%.
+        ctr: null,
+        avgCpc: null,
+      }
+    );
+  }
+  return out;
+}
+
 // ─── Executive overview ──────────────────────────────────────────────────────
 
 export type OverviewAlert = {
@@ -161,7 +199,7 @@ export async function buildOverview(params: {
     totals,
     previousTotals,
     deltas: computeDeltas(totals, previousTotals),
-    series,
+    series: densifySeries(series, start, end),
     alerts,
     sync,
   };
@@ -399,8 +437,8 @@ export async function buildTrends(params: { start: Date; end: Date; scope: Scope
   return {
     window: { start: isoDay(params.start), end: isoDay(params.end) },
     previousWindow: { start: isoDay(prev.start), end: isoDay(prev.end) },
-    series,
-    previousSeries,
+    series: densifySeries(series, params.start, params.end),
+    previousSeries: densifySeries(previousSeries, prev.start, prev.end),
     totals,
     previousTotals,
     deltas: computeDeltas(totals, previousTotals),
