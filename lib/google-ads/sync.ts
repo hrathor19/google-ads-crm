@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import * as reports from './reports';
+import { uniformColumns } from './row-shape';
 import { defaultDateRange } from './reports';
 
 /**
@@ -146,7 +147,7 @@ async function replaceWindow(
     // Chunked so a wide account's 30-day keyword window doesn't build a single
     // multi-megabyte statement.
     const CHUNK = 1000;
-    const columns = Object.keys(rows[0]!);
+    const columns = uniformColumns(rows, table);
     for (let i = 0; i < rows.length; i += CHUNK) {
       const slice = rows.slice(i, i + CHUNK);
       const values = slice.map(
