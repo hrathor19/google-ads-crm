@@ -65,7 +65,10 @@ export function windowOf(refs: RefDates, days: number): { start: Date; end: Date
  */
 export function previousWindow(start: Date, end: Date): { start: Date; end: Date } {
   const lengthDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
-  return { start: addDays(start, -lengthDays), end: addDays(end, -1) };
+  // The comparison window ends the day before the current one *starts*, not
+  // the day before it ends — anchoring on `end` would overlap the two periods
+  // and quietly compare the window against most of itself.
+  return { start: addDays(start, -lengthDays), end: addDays(start, -1) };
 }
 
 /** Fraction of the current UTC day elapsed (for end-of-day projections). */

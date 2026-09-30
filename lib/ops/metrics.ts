@@ -770,7 +770,9 @@ export async function keywordRollup(
 ): Promise<KeywordRow[]> {
   const extra: Prisma.Sql[] = [];
   if (opts.adGroupPk != null) extra.push(Prisma.sql`k.ad_group_id = ${opts.adGroupPk}`);
-  if (opts.campaignPk != null) extra.push(Prisma.sql`k.campaign_id = ${opts.campaignPk}`);
+  // The keywords dimension carries no campaign_id — a keyword's campaign is
+  // reached through its ad group, which is why the join below exists.
+  if (opts.campaignPk != null) extra.push(Prisma.sql`g.campaign_id = ${opts.campaignPk}`);
   if (opts.accountId != null) extra.push(Prisma.sql`k.account_id = ${opts.accountId}`);
   if (opts.search) extra.push(Prisma.sql`k.text ILIKE ${`%${opts.search}%`}`);
   const extraSql = extra.length ? Prisma.sql`AND ${Prisma.join(extra, ' AND ')}` : Prisma.empty;
@@ -803,7 +805,7 @@ export async function keywordRollup(
       k.id, k.criterion_id, k.text, k.match_type, k.status,
       k.ad_group_id AS ad_group_pk,
       g.name        AS ad_group_name,
-      k.campaign_id AS campaign_pk,
+      g.campaign_id AS campaign_pk,
       c.name        AS campaign_name,
       k.account_id,
       s.quality_score,
@@ -817,7 +819,7 @@ export async function keywordRollup(
       COALESCE(s.conversions_value, 0) AS conversions_value
     FROM keywords k
     JOIN ad_groups g ON g.id = k.ad_group_id
-    JOIN campaigns c ON c.id = k.campaign_id
+    JOIN campaigns c ON c.id = g.campaign_id
     LEFT JOIN (
       SELECT keyword_id,
              ROUND(AVG(quality_score))            AS quality_score,
