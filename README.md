@@ -1,4 +1,4 @@
-# Google Ads CRM
+# KollegeApply Ads CRM
 
 A role-based CRM over the Google Ads data that
 [`google-ads-intelligence`](../../google-ads-intelligence-main) syncs: executive
@@ -95,7 +95,8 @@ tests/                     vitest suites
 | `npm test` | Unit tests (parity, scoring, RBAC, workflow) |
 | `npm run e2e` | Workflow + RBAC end-to-end, over HTTP (needs the dev server up) |
 | `npm run check:responsive` | Real Chrome at 360 / 768 / 1280 px, plus accessibility checks |
-| `npm run parity` | Diff this app's aggregation against the Python app's, both captured live |
+| `npm run parity` | Diff this app's aggregation against the Python app's, both captured live. `-- --days=N` widens the window; the default 30 days only covers what the dashboards show, so use a long window after a backfill |
+| `npm run check:secrets` | Fail if a value from `.env` reached the browser bundle. Run it after `npm run build`, never against a `next dev` bundle — it refuses one |
 | `npm run sync` | Manual Google Ads sync |
 | `npm run db:seed` / `db:migrate` / `db:studio` | Prisma |
 
@@ -403,10 +404,11 @@ audience, devices, geography) comes to life.
 ## Testing
 
 ```bash
-npm test                  # 76 unit tests
-npm run e2e               # 53 end-to-end checks (dev server must be running)
-npm run check:responsive  # 246 assertions in real Chrome
+npm test                  # 130 unit tests
+npm run e2e               # 65 end-to-end checks (dev server must be running)
+npm run check:responsive  # 291 assertions in real Chrome
 npm run parity            # 27 metric comparisons against the Python app
+npm run check:secrets     # no .env value in the client bundle (after a build)
 ```
 
 - **Parity** is asserted as a *relationship*, not a frozen snapshot: the Python
