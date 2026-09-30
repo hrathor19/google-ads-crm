@@ -222,7 +222,7 @@ export async function syncAccounts(syncType: SyncRunType = 'manual'): Promise<{
         is_manager: a.is_manager,
         manager_customer_id: a.manager_customer_id,
         test_account: a.test_account,
-      };
+      } satisfies Prisma.accountsUncheckedUpdateInput;
       if (existing) {
         await prisma.accounts.update({ where: { id: existing.id }, data });
         updated += 1;
@@ -474,7 +474,7 @@ async function syncAdGroupsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         status: g.status,
         type: g.type,
         cpc_bid_micros: g.cpc_bid_micros,
-      };
+      } satisfies Prisma.ad_groupsUncheckedUpdateInput;
       if (existing) {
         await prisma.ad_groups.update({ where: { id: existing.id }, data });
         updated += 1;
@@ -537,7 +537,7 @@ async function syncAdsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         final_urls: a.final_urls,
         headlines: a.headlines,
         descriptions: a.descriptions,
-      };
+      } satisfies Prisma.adsUncheckedUpdateInput;
       if (existing) {
         await prisma.ads.update({ where: { id: existing.id }, data });
         updated += 1;
@@ -587,9 +587,13 @@ async function syncKeywordsFor(ctx: EntitySyncContext): Promise<EntityResult> {
     let failed = 0;
 
     for (const k of configs) {
+      // Only the ad group has to resolve here. The source app's
+      // _step_keywords_dim checks ad_group_pk alone, and `keywords` stores no
+      // campaign_id — also requiring the campaign dropped every keyword under
+      // a REMOVED campaign, which the ad-group query returns but the campaign
+      // query filters out. That silently lost 877 keywords on one account.
       const gpk = adGroupPk.get(k.ad_group_id);
-      const cpk = campaignPk.get(k.campaign_id);
-      if (gpk === undefined || cpk === undefined) {
+      if (gpk === undefined) {
         failed += 1;
         continue;
       }
@@ -597,20 +601,33 @@ async function syncKeywordsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         where: { account_id: ctx.accountId, criterion_id: k.criterion_id, ad_group_id: gpk },
         select: { id: true },
       });
-      const data = {
-        ad_group_id: gpk,
-        campaign_id: cpk,
+      // `keywords` has no campaign_id column: a keyword reaches its campaign
+      // through ad_groups. Only keyword_snapshots stores campaign_id directly,
+      // which is why `cpk` is still resolved above — the snapshot rows need it.
+      // `satisfies` is load-bearing: TypeScript only excess-property-checks an
+      // object literal passed inline. Assign it to a variable first and an
+      // invented column slips through to the database driver — which is how a
+      // `campaign_id` that this table does not have reached Prisma and broke
+      // every keywords update.
+      const config = {
         text: k.text,
         match_type: k.match_type,
         status: k.status,
         cpc_bid_micros: k.cpc_bid_micros,
-      };
+      } satisfies Prisma.keywordsUncheckedUpdateInput;
       if (existing) {
-        await prisma.keywords.update({ where: { id: existing.id }, data });
+        // ad_group_id is part of the lookup above, so it cannot have changed;
+        // leaving it out keeps `data` to plain scalars.
+        await prisma.keywords.update({ where: { id: existing.id }, data: config });
         updated += 1;
       } else {
         await prisma.keywords.create({
-          data: { account_id: ctx.accountId, criterion_id: k.criterion_id, ...data },
+          data: {
+            account_id: ctx.accountId,
+            ad_group_id: gpk,
+            criterion_id: k.criterion_id,
+            ...config,
+          },
         });
         inserted += 1;
       }
@@ -693,7 +710,7 @@ async function syncSearchTermsFor(ctx: EntitySyncContext): Promise<EntityResult>
         campaign_id: t.campaignId,
         search_term_targeting_status: t.status,
         match_type: t.matchType,
-      };
+      } satisfies Prisma.search_termsUncheckedUpdateInput;
       if (existing) {
         await prisma.search_terms.update({ where: { id: existing.id }, data });
       } else {
@@ -755,7 +772,7 @@ async function syncBudgetsFor(ctx: EntitySyncContext): Promise<EntityResult> {
         delivery_method: b.delivery_method,
         period: b.period,
         explicitly_shared: b.explicitly_shared,
-      };
+      } satisfies Prisma.budgetsUncheckedUpdateInput;
       if (existing) {
         await prisma.budgets.update({ where: { id: existing.id }, data });
         updated += 1;
