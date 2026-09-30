@@ -27,11 +27,15 @@
   }
 
   .dark {
+    /* In dark mode a raised surface reads as lighter, not as a shadow — a
+       shadow on a near-black page is invisible. The stock shadcn palette gives
+       --card the same value as --background, which left cards *darker* than
+       the muted page shell behind them, so they sank instead of rising. */
     --background: 222.2 84% 4.9%;
     --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    --card: 222 45% 9.5%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover: 222 45% 11%;
     --popover-foreground: 210 40% 98%;
     --primary: 217.2 91.2% 59.8%;
     --primary-foreground: 222.2 47.4% 11.2%;
