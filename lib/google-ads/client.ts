@@ -48,10 +48,46 @@ export function customerFor(customerId: string): Customer {
 }
 
 /**
+ * Node socket failures that mean "the connection broke", not "the request was
+ * wrong".
+ *
+ * These arrive as system errors with a *string* `code`, no `errors` array, and
+ * a message like "read ECONNRESET" that matches none of the gRPC wording
+ * below — so without this list they fell through to a plain Error and were
+ * never retried. Two ads account-months were lost that way during the
+ * historical backfill, each after the socket had hung for ~20 minutes.
+ */
+const TRANSIENT_NETWORK_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ESOCKETTIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENETRESET',
+  'EAI_AGAIN',
+]);
+
+/**
  * Map an SDK/transport failure onto the retryable/fatal taxonomy the sync
  * engine reacts to. Auth and quota problems are never worth retrying blindly;
  * everything transport-shaped is.
+ *
+ * Exported for the unit tests: the classification decides whether a whole
+ * account-month is retried or thrown away, so it is worth testing directly
+ * rather than through a mocked SDK.
  */
+export function classifyError(err: unknown, customerId: string): Error {
+  try {
+    translateError(err, customerId);
+    throw new Error('translateError is declared `never` and must throw.');
+  } catch (e) {
+    return e instanceof Error ? e : new Error(String(e));
+  }
+}
+
 function translateError(err: unknown, customerId: string): never {
   const e = err as { errors?: Array<{ error_code?: Record<string, unknown>; message?: string }>; message?: string; code?: number };
   const message = e?.message ?? String(err);
@@ -78,6 +114,20 @@ function translateError(err: unknown, customerId: string): never {
   if (/UNAVAILABLE|DEADLINE|INTERNAL|RESOURCE_EXHAUSTED/i.test(message)) {
     throw new TransientGoogleAdsError(message);
   }
+
+  // A dropped socket is the most ordinary transient failure there is, and it
+  // arrives with a string code the checks above do not look at.
+  const sysCode = (err as { code?: unknown })?.code;
+  if (typeof sysCode === 'string' && TRANSIENT_NETWORK_CODES.has(sysCode)) {
+    throw new TransientGoogleAdsError(`Network error for ${customerId}: ${message}`);
+  }
+  if (
+    typeof message === 'string' &&
+    Array.from(TRANSIENT_NETWORK_CODES).some((c) => message.includes(c))
+  ) {
+    throw new TransientGoogleAdsError(`Network error for ${customerId}: ${message}`);
+  }
+
   throw err instanceof Error ? err : new Error(message);
 }
 
