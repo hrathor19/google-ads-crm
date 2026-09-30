@@ -157,6 +157,41 @@ async function main() {
   const opsExport = await opsSession.json('/api/export?dataset=accounts&days=7');
   check('Operations cannot export accounts', opsExport.status === 403, `got ${opsExport.status}`);
 
+  // A rolling refresh and a historical backfill have very different costs; the
+  // Ads team holds SYNC:CREATE for the first but must not be able to launch
+  // the second, which is hours of calls against a shared daily quota.
+  const adsRefresh = await adsSession.json('/api/sync', {
+    method: 'POST',
+    body: JSON.stringify({ entities: ['campaigns'], lookbackDays: 1, customerIds: ['0000000000'] }),
+  });
+  check(
+    'Ads team may trigger a rolling refresh',
+    adsRefresh.status !== 403,
+    `got ${adsRefresh.status}`
+  );
+
+  const adsBackfill = await adsSession.json<{ error: string }>('/api/sync', {
+    method: 'POST',
+    body: JSON.stringify({ entities: ['campaigns'], start: '2025-01-01', end: '2025-01-31' }),
+  });
+  check(
+    'Ads team cannot launch a historical backfill',
+    adsBackfill.status === 403,
+    `got ${adsBackfill.status}`
+  );
+
+  const opsBackfill = await opsSession.json('/api/sync', {
+    method: 'POST',
+    body: JSON.stringify({ entities: ['campaigns'], start: '2025-01-01', end: '2025-01-31' }),
+  });
+  check('Operations cannot backfill either', opsBackfill.status === 403, `got ${opsBackfill.status}`);
+
+  const badRange = await adsSession.json('/api/sync', {
+    method: 'POST',
+    body: JSON.stringify({ entities: ['campaigns'], start: '2025-03-01', end: '2025-01-01' }),
+  });
+  check('An inverted backfill range is refused', badRange.status === 400, `got ${badRange.status}`);
+
   const opsCopy = await opsSession.json('/api/ai/ad-copy', {
     method: 'POST',
     body: JSON.stringify({ tone: 'professional', product: 'x', landingPageUrl: 'https://example.com' }),

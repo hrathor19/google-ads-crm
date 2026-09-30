@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { clientIp, forbidden, handle, parseBody, prisma, requirePermission } from '@/lib/api';
+import { hasPermission } from '@/lib/rbac/permissions';
 import { logAudit } from '@/lib/audit';
 import { runSync, SYNC_ENTITIES, type SyncEntity } from '@/lib/google-ads/sync';
 import { syncHealth } from '@/lib/ops/metrics';
@@ -41,6 +42,23 @@ export async function POST(req: Request) {
   return handle(async () => {
     const principal = await requirePermission('SYNC', 'CREATE');
     const body = await parseBody(req, schema);
+
+    // A rolling refresh and a historical backfill are different operations
+    // with different costs. The refresh is routine — a few days across the
+    // accounts you can see. A backfill can be years across every account:
+    // minutes to hours of calls against a shared daily API quota, which, if
+    // exhausted, stops the scheduled sync for everyone. SYNC:CREATE is the
+    // right bar for the first and too low for the second, so an explicit
+    // range additionally requires INTEGRATIONS:MANAGE — the permission that
+    // already gates the page the backfill form lives on.
+    if (body.start && body.end) {
+      if (!(await hasPermission(principal, 'INTEGRATIONS:MANAGE'))) {
+        throw forbidden(
+          'Backfilling history requires the "Integrations health: Manage" permission. ' +
+            'You can still run a rolling refresh.'
+        );
+      }
+    }
 
     await logAudit({
       actorId: principal.userId,

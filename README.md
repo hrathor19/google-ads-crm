@@ -147,7 +147,11 @@ largest table by an order of magnitude.
 > further.
 
 Or from the UI: **Administration → Integrations health → Backfill historical
-data**. A run with an explicit range is recorded in `sync_logs` as
+data** — which needs **`INTEGRATIONS:MANAGE`** on top of `SYNC:CREATE`. The
+rolling Refresh is routine and a backfill is not: it can be hours of calls
+against a shared daily API quota, and exhausting that stops the scheduled sync
+for everyone. Of the seeded roles, only Super Admin can run one; the Google
+Ads Team can still refresh. A run with an explicit range is recorded in `sync_logs` as
 `sync_type = 'backfill'` rather than `'manual'`, so the two are distinguishable
 afterwards.
 

@@ -50,7 +50,10 @@ export function BackfillCard() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<SyncResult | null>(null);
 
-  if (!can('SYNC', 'CREATE')) return null;
+  // Matches the API guard: a backfill needs INTEGRATIONS:MANAGE on top of
+  // SYNC:CREATE, because it is minutes-to-hours of calls against a shared
+  // quota rather than a routine refresh.
+  if (!can('SYNC', 'CREATE') || !can('INTEGRATIONS', 'MANAGE')) return null;
 
   const invalid = !start || !end || start > end;
 
