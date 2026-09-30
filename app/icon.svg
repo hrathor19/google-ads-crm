@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Matches the sidebar mark: the bar-chart glyph on the brand navy. -->
-  <rect width="32" height="32" rx="7" fill="#0d2455"/>
-  <g stroke="#fff" stroke-width="2.4" stroke-linecap="round" fill="none">
-    <path d="M9 22V14"/>
-    <path d="M16 22V10"/>
-    <path d="M23 22v-5"/>
-  </g>
-</svg>

@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { AlertCircle, BarChart3, Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
+import { BrandMark } from '@/components/shell/brand-mark';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -56,11 +57,11 @@ function LoginForm() {
   return (
     <Card className="w-full max-w-sm animate-fade-in-up shadow-lg">
       <CardHeader className="space-y-3 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-          <BarChart3 className="h-6 w-6" aria-hidden="true" />
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+          <BrandMark className="h-7 w-8" />
         </div>
         <div>
-          <CardTitle className="text-xl">Google Ads CRM</CardTitle>
+          <CardTitle className="text-xl">KollegeApply Ads CRM</CardTitle>
           <CardDescription>Sign in to continue</CardDescription>
         </div>
       </CardHeader>

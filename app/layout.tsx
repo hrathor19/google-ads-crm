@@ -11,11 +11,12 @@ const inter = Inter({ subsets: ['latin'] });
 assertRequiredEnv();
 
 export const metadata: Metadata = {
-  title: 'Google Ads CRM',
+  title: 'KollegeApply Ads CRM',
   description: 'Google Ads performance, ad request workflow and role-based access for KollegeApply',
-  // app/icon.svg is picked up by the file convention; naming it here as well
-  // stops the browser probing /favicon.ico and 404ing.
-  icons: { icon: '/icon.svg' },
+  // The same mark Counselling CRM uses, so the two apps read as one product.
+  // Declared here rather than via app/icon.* because that file convention
+  // overrides the whole `icons` object.
+  icons: { icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }] },
 };
 
 export const viewport: Viewport = {

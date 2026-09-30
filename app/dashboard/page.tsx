@@ -1,7 +1,21 @@
 'use client';
 
 import Link from 'next/link';
-import { AlertTriangle, ArrowRight, Ban, Clock, TrendingDown, TrendingUp } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowRight,
+  Ban,
+  Clock,
+  Eye,
+  MousePointerClick,
+  Percent,
+  Target,
+  TrendingDown,
+  TrendingUp,
+  Wallet,
+  Users,
+  Coins,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -111,37 +125,48 @@ export default function DashboardPage() {
             <StatTile
               label="Accounts"
               value={formatNumber(data.counts.accounts)}
+              icon={Users}
               hint="Client accounts under the MCC, excluding the manager account itself."
             />
             <StatTile
               label="Spend"
               value={data.canSeeMoney ? formatCurrency(data.totals.cost) : '—'}
+              icon={Wallet}
               delta={data.canSeeMoney ? data.deltas.cost : undefined}
               hint={data.canSeeMoney ? undefined : 'You do not have permission to view spend.'}
             />
             <StatTile
               label="Impressions"
               value={formatNumber(data.totals.impressions, { compact: true })}
+              icon={Eye}
               delta={data.deltas.impressions}
             />
             <StatTile
               label="Clicks"
               value={formatNumber(data.totals.clicks, { compact: true })}
+              icon={MousePointerClick}
               delta={data.deltas.clicks}
             />
           </section>
 
           <section aria-label="Efficiency metrics" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatTile label="CTR" value={formatPercent(data.totals.ctr)} delta={data.deltas.ctr} />
+            <StatTile
+              label="CTR"
+              value={formatPercent(data.totals.ctr)}
+              icon={Percent}
+              delta={data.deltas.ctr}
+            />
             <StatTile
               label="Avg. CPC"
               value={data.canSeeMoney ? formatCurrency(data.totals.avgCpc) : '—'}
+              icon={Coins}
               delta={data.canSeeMoney ? data.deltas.avgCpc : undefined}
               direction="down-good"
             />
             <StatTile
               label="Conversions"
               value={formatNumber(data.totals.conversions, { decimals: 1 })}
+              icon={Target}
               delta={data.deltas.conversions}
             />
             <StatTile

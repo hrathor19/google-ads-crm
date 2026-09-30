@@ -7,6 +7,7 @@
  */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { ALL_FEATURES, SEED_ROLES } from '@/lib/rbac/features';
 
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3000';
 const prisma = new PrismaClient();
@@ -84,9 +85,54 @@ class Session {
 
 const TEST_PASSWORD = 'E2ePassw0rdCheck';
 
-/** Create (or reset) a test user on a given role, already past the password gate. */
+/**
+ * A dedicated role per test persona, rebuilt from SEED_ROLES on every run.
+ *
+ * The first version of this assigned test users to the *live* seeded roles.
+ * That made the suite depend on configuration a Super Admin is entitled to
+ * change: the moment someone revoked DASHBOARD:VIEW from Operations through
+ * the matrix — which is exactly what the matrix is for — the suite failed and
+ * pointed at the wrong thing. A test must not break because the product was
+ * used correctly.
+ *
+ * These roles are disposable fixtures. Resetting them every run also means an
+ * interrupted run cannot leave a half-configured role behind.
+ */
+async function ensureRole(sourceSlug: string) {
+  const def = SEED_ROLES.find((r) => r.slug === sourceSlug);
+  if (!def) throw new Error(`no seeded role "${sourceSlug}" to model the fixture on`);
+
+  const slug = `e2e-${sourceSlug}`;
+  const role = await prisma.crmRole.upsert({
+    where: { slug },
+    create: {
+      slug,
+      name: `E2E ${def.name}`,
+      description: 'Disposable fixture for the e2e suite.',
+      isSystem: false,
+      isSuperAdmin: def.isSuperAdmin ?? false,
+      allAccounts: true,
+    },
+    update: {},
+  });
+
+  // Rewrite every toggle, so the fixture is exactly the seeded intent
+  // regardless of what a previous run or a human left behind.
+  const granted = new Set(def.features);
+  await prisma.crmRolePermission.deleteMany({ where: { roleId: role.id } });
+  await prisma.crmRolePermission.createMany({
+    data: ALL_FEATURES.map((feature) => ({
+      roleId: role.id,
+      feature,
+      allowed: granted.has(feature),
+    })),
+  });
+  return role;
+}
+
+/** Create (or reset) a test user on its fixture role, past the password gate. */
 async function ensureUser(email: string, name: string, roleSlug: string) {
-  const role = await prisma.crmRole.findUniqueOrThrow({ where: { slug: roleSlug } });
+  const role = await ensureRole(roleSlug);
   const password = await bcrypt.hash(TEST_PASSWORD, 10);
   return prisma.crmUser.upsert({
     where: { email },
@@ -413,9 +459,9 @@ async function main() {
     });
     check('A role with users assigned cannot be deleted', inUse.status === 409, inUse.body?.error);
 
-    // Put the user back so the delete guard can be cleared.
-    const opsRole = await prisma.crmRole.findUniqueOrThrow({ where: { slug: 'operations' } });
-    await prisma.crmUser.update({ where: { id: ops.id }, data: { roleId: opsRole.id } });
+    // Put the user back on its fixture role so the delete guard clears.
+    const opsFixture = await prisma.crmRole.findUniqueOrThrow({ where: { slug: 'e2e-operations' } });
+    await prisma.crmUser.update({ where: { id: ops.id }, data: { roleId: opsFixture.id } });
 
     const deleted = await admin.json(`/api/admin/roles/${roleId}`, { method: 'DELETE' });
     check('An unassigned custom role can be deleted', deleted.status === 200);

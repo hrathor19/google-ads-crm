@@ -57,6 +57,21 @@ const config: Config = {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+        xl: 'calc(var(--radius) + 4px)',
+      },
+      boxShadow: {
+        // A material elevation scale. Each level is TWO shadows: a tight,
+        // near-opaque one for the contact edge and a wide, soft one for the
+        // cast. A single blurred shadow reads as a grey smudge; the pair is
+        // what makes a surface look lifted rather than merely outlined.
+        // Tinted with the page's ink colour rather than pure black, so it
+        // sits in the palette instead of greying it.
+        'elevation-1':
+          '0 1px 2px -1px hsl(222 47% 20% / 0.06), 0 1px 3px 0 hsl(222 47% 20% / 0.05)',
+        'elevation-2':
+          '0 2px 4px -2px hsl(222 47% 20% / 0.07), 0 6px 16px -4px hsl(222 47% 20% / 0.09)',
+        'elevation-3':
+          '0 4px 8px -3px hsl(222 47% 20% / 0.08), 0 14px 32px -6px hsl(222 47% 20% / 0.13)',
       },
       keyframes: {
         'accordion-down': {

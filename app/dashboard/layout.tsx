@@ -5,8 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { grantedFeatures, resolveAllowedAccountIds } from '@/lib/rbac/permissions';
 import { PermissionProvider } from '@/components/providers/permission-provider';
 import { FiltersProvider } from '@/components/providers/filters-provider';
-import { Sidebar } from '@/components/shell/sidebar';
-import { TopBar } from '@/components/shell/topbar';
+import { DashboardShell } from '@/components/shell/dashboard-shell';
 
 /**
  * The authenticated shell.
@@ -61,13 +60,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       features={features}
     >
       <FiltersProvider>
-        <div className="flex min-h-dvh bg-muted/30">
-          <Sidebar />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <TopBar />
-            <main className="flex-1 px-4 py-5 sm:px-6 sm:py-6">{children}</main>
-          </div>
-        </div>
+        <DashboardShell>{children}</DashboardShell>
       </FiltersProvider>
     </PermissionProvider>
   );

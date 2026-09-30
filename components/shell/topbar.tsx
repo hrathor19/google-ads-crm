@@ -15,7 +15,6 @@ import {
   RefreshCw,
   Sun,
   User,
-  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,7 +37,6 @@ import { useApi, apiSend } from '@/lib/hooks/use-api';
 import { useToast } from '@/components/ui/use-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { formatRelative } from '@/lib/format';
-import { SidebarBrand, SidebarNav } from './sidebar';
 
 type AccountOption = { id: number; name: string | null; customerId: string };
 
@@ -400,66 +398,21 @@ function UserMenu() {
   );
 }
 
-/** Slide-in navigation for phone and tablet widths. */
-function MobileDrawer() {
-  const [open, setOpen] = useState(false);
-
+export function TopBar({ onMenuClick }: { onMenuClick: () => void }) {
   return (
-    <>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="lg:hidden"
-        onClick={() => setOpen(true)}
-        aria-label="Open navigation"
-      >
-        <Menu className="h-5 w-5" aria-hidden="true" />
-      </Button>
-
-      {open && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50 animate-fade-in"
-            onClick={() => setOpen(false)}
-            aria-label="Close navigation"
-          />
-          <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col bg-card shadow-xl animate-slide-in">
-            <div className="flex items-center justify-between border-b">
-              <SidebarBrand />
-              <Button
-                variant="ghost"
-                size="icon"
-                className="mr-2"
-                onClick={() => setOpen(false)}
-                aria-label="Close navigation"
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </Button>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              <SidebarNav onNavigate={() => setOpen(false)} />
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
-/**
- * The top bar.
- *
- * Below `sm` the two filter controls move to their own row: an account
- * switcher, a date picker and four icon buttons do not fit across 360px, and
- * squeezing them produces a header that scrolls sideways. From `sm` up
- * everything sits on one line.
- */
-export function TopBar() {
-  return (
-    <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+    // No `sticky` needed: the shell scrolls only the main column, so the bar
+    // is already fixed relative to the viewport.
+    <header className="z-40 shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
       <div className="flex h-14 items-center gap-2 px-3 sm:px-4">
-        <MobileDrawer />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="lg:hidden"
+          onClick={onMenuClick}
+          aria-label="Open navigation"
+        >
+          <Menu className="h-5 w-5" aria-hidden="true" />
+        </Button>
 
         {/* From sm up the filters sit inline with the actions. */}
         <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
