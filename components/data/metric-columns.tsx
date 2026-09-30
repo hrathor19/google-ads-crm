@@ -25,7 +25,9 @@ export function metricColumns<T extends {
   const columns: Array<Column<T>> = [
     {
       key: 'impressions',
-      header: 'Impressions',
+      // Google Ads' own abbreviation. The full word is the widest header in
+      // every table and its values never need that much room.
+      header: 'Impr.',
       align: 'right',
       cell: (r) => formatNumber(r.impressions),
       sortValue: (r) => r.impressions,

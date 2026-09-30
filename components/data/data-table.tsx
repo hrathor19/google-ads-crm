@@ -16,6 +16,9 @@ import { cn } from '@/lib/utils';
  * pagination work identically in both layouts.
  */
 
+/** Widest a column may grow before its content has to truncate. */
+const DEFAULT_MAX_COL_WIDTH = '16rem';
+
 export type Column<T> = {
   key: string;
   header: string;
@@ -27,6 +30,14 @@ export type Column<T> = {
   /** Hidden in the mobile card layout — used for low-signal columns. */
   hideOnMobile?: boolean;
   className?: string;
+  /**
+   * Cap this column's width. Table cells size to their content, so one long
+   * value — a campaign named
+   * "MICA || KAPPLP || 2027 || klp_ca_0002 || …" — stretches its column until
+   * every metric is pushed off the right edge. `truncate` alone cannot stop
+   * that: it needs something to truncate *against*.
+   */
+  maxWidth?: string;
 };
 
 type SortState = { key: string; dir: 'asc' | 'desc' } | null;
@@ -131,9 +142,16 @@ export function DataTable<T extends { [k: string]: unknown }>({
       )}
 
       {/* Desktop: a real table. */}
-      <Card className="hidden md:block">
+      <Card className="hidden overflow-hidden md:block">
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          {/* A horizontally scrollable table gives no hint that it scrolls, so
+              a faint edge fade marks where the content continues. */}
+          <div className="relative">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-card to-transparent"
+            />
+            <div className="overflow-x-auto">
             <table className="w-full caption-bottom text-sm">
               {caption && <caption className="sr-only">{caption}</caption>}
               <thead className="border-b bg-muted/40">
@@ -143,7 +161,7 @@ export function DataTable<T extends { [k: string]: unknown }>({
                       key={col.key}
                       scope="col"
                       className={cn(
-                        'whitespace-nowrap px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground',
+                        'whitespace-nowrap px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground',
                         col.align === 'right' ? 'text-right' : 'text-left'
                       )}
                       aria-sort={
@@ -195,10 +213,16 @@ export function DataTable<T extends { [k: string]: unknown }>({
                       <td
                         key={col.key}
                         className={cn(
-                          'px-4 py-2.5',
+                          'px-3 py-2.5',
                           col.align === 'right' && 'text-right tabular-nums',
                           col.className
                         )}
+                        // No column may outgrow the cap unless it asks to.
+                        // Badge and number columns never reach it, so it only
+                        // bites on long-text ones — which is the point.
+                        // Capping only the first column missed tables whose
+                        // identifier sits in column two.
+                        style={{ maxWidth: col.maxWidth ?? DEFAULT_MAX_COL_WIDTH }}
                       >
                         {col.cell(row)}
                       </td>
@@ -209,14 +233,15 @@ export function DataTable<T extends { [k: string]: unknown }>({
                   <tr>
                     <td
                       colSpan={columns.length}
-                      className="px-4 py-12 text-center text-muted-foreground"
+                      className="px-3 py-12 text-center text-muted-foreground"
                     >
                       {emptyMessage}
                     </td>
                   </tr>
                 )}
               </tbody>
-            </table>
+              </table>
+            </div>
           </div>
         </CardContent>
       </Card>

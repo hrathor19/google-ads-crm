@@ -52,12 +52,18 @@ export default function CampaignsPage() {
     {
       key: 'health',
       header: 'Health',
+      // Without a cap the reason text ("Spend up 340% week over week", …)
+      // stretches this column and pushes the metrics off the right edge.
+      maxWidth: '13rem',
       cell: (r) =>
         r.health ? (
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <HealthBadge score={r.health.score} level={r.health.level} />
             {r.health.primaryReason && (
-              <span className="hidden truncate text-xs text-muted-foreground xl:inline">
+              <span
+                className="hidden min-w-0 flex-1 truncate text-xs text-muted-foreground xl:block"
+                title={r.health.primaryReason}
+              >
                 {r.health.primaryReason}
               </span>
             )}

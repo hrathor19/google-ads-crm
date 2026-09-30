@@ -78,6 +78,7 @@ export default function PrioritiesPage() {
     {
       key: 'reason',
       header: 'What to look at',
+      maxWidth: '20rem',
       cell: (r) => (
         <div className="flex flex-wrap gap-1">
           {r.priority.reasons.slice(0, 3).map((reason) => (
