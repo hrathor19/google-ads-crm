@@ -109,6 +109,28 @@ npm run sync -- --customers=8104811686 --entities=keywords
 
 The same code backs the **Refresh** button in the top bar.
 
+#### Scheduling the sync
+
+Nothing syncs on its own. `scripts/cron-sync.sh` is the scheduled entry point:
+
+```cron
+15 * * * *  /path/to/google-ads-crm/scripts/cron-sync.sh hourly   # campaigns, 2-day window
+15 4 * * *  /path/to/google-ads-crm/scripts/cron-sync.sh daily    # every entity, 30-day window
+```
+
+That mirrors the source project's APScheduler cadence (hourly light, daily
+full at 04:15 UTC). What differs is that the scheduler lives **outside** the
+app rather than inside the web process: on a serverless or multi-instance
+deploy an in-process scheduler means N schedulers racing, all calling the same
+API with the same credentials. An external timer is one scheduler however many
+web instances are running.
+
+The script takes a lock so a slow run cannot overlap the next tick — two
+overlapping passes would double the API load and interleave two
+`replaceWindow` writes over the same window. The lock uses `mkdir` rather than
+`flock`, which is absent on macOS, and reclaims itself if a killed run leaves
+it behind for more than six hours. Logs go to `storage/logs/sync-<mode>.log`.
+
 #### Backfilling history (`npm run backfill`)
 
 The scheduled sync only ever pulls a **rolling window** (30 days by default),
