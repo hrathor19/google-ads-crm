@@ -103,10 +103,23 @@ function gaqlDateBetween(start: Date, end: Date): string {
   return `segments.date BETWEEN '${iso(start)}' AND '${iso(end)}'`;
 }
 
-/** (start, end) covering the last `lookbackDays` complete days, ending yesterday. */
+/**
+ * (start, end) covering the last `lookbackDays` days, ending today.
+ *
+ * This used to end yesterday, on the reasoning that today is still
+ * accumulating and mixing a partial day with complete ones distorts a
+ * comparison. That reasoning belongs to *reporting*, not to syncing: the
+ * dashboard already decides which days to show. Ending yesterday here meant
+ * today's figures were never fetched at all, so the "Today" range had nothing
+ * to display and the Refresh button could not change that.
+ *
+ * Re-fetching a day is free of side effects — `replaceWindow` replaces a
+ * window rather than appending to it — so today's partial row is simply
+ * rewritten, more complete each time, until the day closes.
+ */
 export function defaultDateRange(lookbackDays: number): { start: Date; end: Date } {
   const now = new Date();
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const start = new Date(end.getTime());
   start.setUTCDate(start.getUTCDate() - Math.max(0, lookbackDays - 1));
   return { start, end };

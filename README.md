@@ -103,6 +103,13 @@ tests/                     vitest suites
 
 ### Syncing
 
+The Refresh button in the top bar posts
+`{ entities: ['campaigns'], lookbackDays: 3 }` — campaign rows only, for the
+last three days **including today**. Three days rather than one because
+Google restates recent figures as late conversions attribute back. It does
+not refresh keywords, ads, search terms, ad groups or budgets; the daily cron
+below covers those.
+
 ```bash
 npm run sync                                             # everything, 30-day lookback
 npm run sync -- --entities=campaigns --days=7            # one entity, shorter window
