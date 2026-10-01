@@ -64,7 +64,7 @@ export function StatTile({
             {label}
           </p>
           {Accent && (
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground">
               <Accent className="h-3.5 w-3.5" aria-hidden="true" />
             </span>
           )}
