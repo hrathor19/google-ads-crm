@@ -3,13 +3,14 @@ import {
   Activity,
   BarChart3,
   BellRing,
-  ListChecks,
   ClipboardList,
   FileSearch,
   Gauge,
   KeyRound,
   LayoutDashboard,
   LineChart,
+  ListChecks,
+  Mail,
   PlugZap,
   Search,
   Shield,
@@ -93,6 +94,14 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: '/dashboard/admin/users', label: 'Users', icon: Users, requires: [['USERS', 'VIEW']] },
       { href: '/dashboard/admin/roles', label: 'Roles & permissions', icon: Shield, requires: [['ROLES', 'VIEW']] },
       { href: '/dashboard/admin/audit', label: 'Audit log', icon: Activity, requires: [['AUDIT', 'VIEW']] },
+      {
+        href: '/dashboard/admin/email',
+        label: 'Email',
+        icon: Mail,
+        // MANAGE, not VIEW: this decides where client budgets and rejection
+        // reasons are mailed.
+        requires: [['INTEGRATIONS', 'MANAGE']],
+      },
       {
         href: '/dashboard/admin/integrations',
         label: 'Integrations health',

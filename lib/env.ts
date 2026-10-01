@@ -117,6 +117,17 @@ export const env = {
     includeSuspended: bool('SYNC_INCLUDE_SUSPENDED', true),
   }),
 
+  /**
+   * Transactional email. The Brevo key and sender come across from the Google
+   * Ads Intelligence project; everything else about how mail is addressed
+   * lives in the database so a Super Admin can change it without a deploy.
+   */
+  email: () => ({
+    brevoApiKey: str('BREVO_API_KEY'),
+    /** Seeds the From address the first time the settings row is created. */
+    defaultFrom: str('EMAIL_FROM'),
+  }),
+
   landingPage: () => ({
     timeoutMs: num('LANDING_PAGE_TIMEOUT_SECONDS', 15) * 1000,
     maxBytes: num('LANDING_PAGE_MAX_BYTES', 2_000_000),

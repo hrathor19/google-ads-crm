@@ -761,6 +761,74 @@ enum AdRequestStatus {
   COMPLETED
 }
 
+/// Who a notification mail goes to, besides any fixed addresses.
+enum CrmEmailAudience {
+  /// Everyone holding a given permission, e.g. whoever can approve.
+  ROLE
+  /// The person who raised the request.
+  REQUESTER
+  /// The person the request is assigned to.
+  ASSIGNEE
+  /// Only the fixed To addresses configured on the route.
+  FIXED
+}
+
+/// Email settings, one row. `id` is pinned so there can only ever be one.
+model CrmEmailSetting {
+  id Int @id @default(1)
+
+  /// Master switch. Off means nothing is sent, whatever the routes say.
+  enabled Boolean @default(false)
+
+  fromName  String  @default("KollegeApply Ads CRM") @map("from_name")
+  fromEmail String  @map("from_email")
+  replyTo   String? @map("reply_to")
+
+  /// Prefixed to every subject. `[AD-{{reference}}]` keeps a request's mails
+  /// in one thread in most clients, and makes them searchable.
+  subjectPrefix String? @default("[{{reference}}]") @map("subject_prefix")
+
+  /// Applied to every mail on top of whatever each route adds.
+  globalCc  String? @map("global_cc")
+  globalBcc String? @map("global_bcc")
+
+  /// Sends nothing to real people; every mail goes here instead. For trying
+  /// the configuration out without mailing the whole team.
+  testModeRecipient String? @map("test_mode_recipient")
+
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedById String?  @map("updated_by_id")
+  updatedBy   CrmUser? @relation("emailSettingUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("crm_email_settings")
+}
+
+/// What to send, and to whom, for one workflow event.
+model CrmEmailRoute {
+  id    String              @id @default(cuid())
+  event CrmNotificationType @unique
+
+  enabled Boolean @default(true)
+
+  audience           CrmEmailAudience @default(ROLE)
+  /// Used when `audience` is ROLE: everyone holding this `MODULE:ACTION`.
+  audiencePermission String?          @map("audience_permission")
+
+  /// Comma-separated addresses, added to whoever `audience` resolves to.
+  toEmails String? @map("to_emails")
+  cc       String?
+  bcc      String?
+
+  /// Mustache-ish: {{reference}} {{title}} {{status}} {{actor}} {{link}}.
+  subject String
+  /// Optional lead paragraph above the standard body.
+  intro   String?
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("crm_email_routes")
+}
+
 /// The brief's "Client/Generic/NonClient/Exam" column.
 enum AdRequestClientType {
   CLIENT
@@ -836,6 +904,8 @@ enum CrmAuditAction {
   DATA_EXPORTED
   SYNC_TRIGGERED
   INTEGRATION_TESTED
+  EMAIL_SETTINGS_UPDATED
+  EMAIL_TEST_SENT
 }
 
 /// A role is a named bundle of permission toggles plus an account scope.
@@ -919,6 +989,7 @@ model CrmUser {
   adCopyVersions   CrmAdCopyVersion[]
   landingScores    CrmLandingScore[]
   notifications    CrmNotification[]
+  emailSettings    CrmEmailSetting[]   @relation("emailSettingUpdatedBy")
   auditLogs        CrmAuditLog[]
 
   @@index([roleId])
