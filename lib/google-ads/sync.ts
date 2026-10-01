@@ -128,6 +128,13 @@ async function closeSyncLog(
  * ones, inside one transaction so a failed insert rolls back the delete and
  * the old rows survive.
  */
+/**
+ * How long one window replacement may take. Generous on purpose: exceeding it
+ * loses the whole account-month, and the work is a bulk insert that is either
+ * fast or blocked on something worth waiting for.
+ */
+const REPLACE_WINDOW_TIMEOUT_MS = 180_000;
+
 async function replaceWindow(
   table: string,
   accountId: number,
@@ -159,6 +166,16 @@ async function replaceWindow(
         VALUES ${Prisma.join(values)}
       `;
     }
+  },
+  {
+    // Prisma's default interactive-transaction timeout is 5s, which is fine
+    // for a campaign window and nowhere near enough for a dense one: a single
+    // account-month of search terms is ~14,000 rows and blew the limit at
+    // 5,160ms. The whole window has to land in one transaction — the DELETE
+    // and the INSERTs are the two halves of one replace — so the timeout has
+    // to accommodate the widest account rather than the typical one.
+    timeout: REPLACE_WINDOW_TIMEOUT_MS,
+    maxWait: 15_000,
   });
   return rows.length;
 }
@@ -686,9 +703,20 @@ async function syncSearchTermsFor(ctx: EntitySyncContext): Promise<EntityResult>
     let inserted = 0;
     let failed = 0;
 
-    // The dimension is upserted once per distinct (query, ad group); the
-    // snapshot carries the daily metrics.
-    const seen = new Map<string, { query: string; adGroupId: number; campaignId: number; status: string | null; matchType: string | null }>();
+    // A search term is identified by (ad_group_id, query, match_type) — the
+    // table's unique constraint, and the source app's `unique_by`. The same
+    // query really can arrive under two match types in one ad group, and they
+    // are different rows. Keying on (query, ad group) alone collapsed them,
+    // then tried to *update* match_type into whichever arrived first, which
+    // collided with the row that already held it:
+    //   Unique constraint failed on (`ad_group_id`,`query`,`match_type`)
+    const termKey = (adGroupId: number, query: string, matchType: string | null) =>
+      `${adGroupId}\u0000${query}\u0000${matchType ?? ''}`;
+
+    const seen = new Map<
+      string,
+      { query: string; adGroupId: number; campaignId: number; status: string | null; matchType: string | null }
+    >();
     for (const t of fetched) {
       const gpk = adGroupPk.get(t.ad_group_id);
       const cpk = campaignPk.get(t.campaign_id);
@@ -696,7 +724,7 @@ async function syncSearchTermsFor(ctx: EntitySyncContext): Promise<EntityResult>
         failed += 1;
         continue;
       }
-      const key = `${t.query}\u0000${gpk}`;
+      const key = termKey(gpk, t.query, t.match_type);
       if (!seen.has(key)) {
         seen.set(key, {
           query: t.query,
@@ -710,22 +738,24 @@ async function syncSearchTermsFor(ctx: EntitySyncContext): Promise<EntityResult>
 
     for (const t of Array.from(seen.values())) {
       const existing = await prisma.search_terms.findFirst({
-        where: { account_id: ctx.accountId, query: t.query, ad_group_id: t.adGroupId },
+        where: { ad_group_id: t.adGroupId, query: t.query, match_type: t.matchType },
         select: { id: true },
       });
+      // match_type is part of the identity, so it is never updated — only the
+      // values the source app carries in `values`.
       const data = {
+        account_id: ctx.accountId,
         campaign_id: t.campaignId,
         search_term_targeting_status: t.status,
-        match_type: t.matchType,
       } satisfies Prisma.search_termsUncheckedUpdateInput;
       if (existing) {
         await prisma.search_terms.update({ where: { id: existing.id }, data });
       } else {
         await prisma.search_terms.create({
           data: {
-            account_id: ctx.accountId,
             query: t.query,
             ad_group_id: t.adGroupId,
+            match_type: t.matchType,
             ...data,
           },
         });
@@ -735,16 +765,18 @@ async function syncSearchTermsFor(ctx: EntitySyncContext): Promise<EntityResult>
 
     const termRows = await prisma.search_terms.findMany({
       where: { account_id: ctx.accountId },
-      select: { id: true, query: true, ad_group_id: true },
+      select: { id: true, query: true, ad_group_id: true, match_type: true },
     });
-    const termPk = new Map(termRows.map((t) => [`${t.query}\u0000${t.ad_group_id}`, t.id]));
+    const termPk = new Map(
+      termRows.map((t) => [termKey(t.ad_group_id, t.query, t.match_type), t.id])
+    );
 
     const rows = fetched
       .map((m) => {
         const gpk = adGroupPk.get(m.ad_group_id);
         const cpk = campaignPk.get(m.campaign_id);
         if (gpk === undefined || cpk === undefined || !m.snapshot_date) return null;
-        const tpk = termPk.get(`${m.query}\u0000${gpk}`);
+        const tpk = termPk.get(termKey(gpk, m.query, m.match_type));
         if (tpk === undefined) return null;
         return {
           search_term_id: tpk,
