@@ -62,7 +62,7 @@ const adRequestFields = z.object({
     title: z.string().trim().min(3, 'Give the campaign a name').max(200),
     clientType: z.nativeEnum(AdRequestClientType).nullable().optional(),
     accountId: z.coerce.number().int().positive().nullable().optional(),
-    objective: z.nativeEnum(CampaignObjective),
+    objective: z.nativeEnum(CampaignObjective).optional(),
     /** The sheet's "Courses". */
     productService: z.string().trim().min(2, 'Which courses?').max(500),
 
@@ -94,7 +94,7 @@ const adRequestFields = z.object({
     focusedMonths: text(200),
 
     // ── Targeting ───────────────────────────────────────────────────────────
-    targetAudience: z.string().trim().min(2, 'Describe the target audience').max(1000),
+    targetAudience: text(1000),
     ageRestriction: z.nativeEnum(AdRequestAgeRestriction).nullable().optional(),
     /** The sheet's "Location (Need to be run)". */
     location: z.string().trim().min(2, 'Where should the ads run?').max(500),

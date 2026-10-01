@@ -46,7 +46,13 @@ export type AdCopyBrief = {
   /** The account or brand name that should appear in headlines. */
   brand?: string | null;
   objective: string;
-  targetAudience: string;
+  /**
+   * Nullable since the Ops requirement form stopped asking for it. The
+   * prompt omits the line entirely rather than telling the model the
+   * audience is "null", and the deterministic engine drops the phrase that
+   * would have named it.
+   */
+  targetAudience: string | null;
   location: string;
   landingPageUrl: string;
   usps?: string | null;
@@ -128,7 +134,7 @@ function buildPrompt(brief: AdCopyBrief, facts: LandingFacts | null): string {
   lines.push(`- Advertising: ${brief.product}`);
   if (brief.brand) lines.push(`- Brand / account: ${brief.brand}`);
   lines.push(`- Objective: ${brief.objective}`);
-  lines.push(`- Target audience: ${brief.targetAudience}`);
+  if (brief.targetAudience) lines.push(`- Target audience: ${brief.targetAudience}`);
   lines.push(`- Location: ${brief.location}`);
   lines.push(`- Landing page: ${brief.landingPageUrl}`);
   if (brief.usps) lines.push(`- USPs / offers: ${brief.usps}`);
@@ -310,12 +316,14 @@ export function generateDeterministic(
 
   // Descriptions get 90 characters — enough for two short sentences, not for
   // a subject repeated twice.
-  const audience = brief.targetAudience.trim().toLowerCase();
-  const audienceShort = clamp(audience, 28);
+  const audience = (brief.targetAudience ?? '').trim().toLowerCase();
+  const audienceShort = audience ? clamp(audience, 28) : '';
   const atBrand = brand ? ` at ${brand}` : '';
 
   const descriptionCandidates: Array<string | null> = [
-    clamp(`${product}${atBrand}. Built for ${audienceShort}. Apply online in minutes.`, D_MAX),
+    audienceShort
+      ? clamp(`${product}${atBrand}. Built for ${audienceShort}. Apply online in minutes.`, D_MAX)
+      : clamp(`${product}${atBrand}. Apply online in minutes.`, D_MAX),
     hasFees
       ? clamp(`See fees, eligibility and course details for ${product}. Enquire today.`, D_MAX)
       : clamp(`See eligibility and course details for ${product}. Enquire today.`, D_MAX),

@@ -73,32 +73,19 @@ const schema = z
     title: z.string().trim().min(3, 'Give the campaign a name').max(200),
     clientType: z.enum(['CLIENT', 'GENERIC', 'NON_CLIENT', 'EXAM']).optional(),
     productService: z.string().trim().min(2, 'Which courses?').max(500),
-    accountId: z.string().optional(),
-    objective: z.enum([
-      'LEAD_GENERATION',
-      'WEBSITE_TRAFFIC',
-      'BRAND_AWARENESS',
-      'APP_PROMOTION',
-      'SALES',
-      'LOCAL_VISITS',
-    ]),
 
     // ── Targets ───────────────────────────────────────────────────────────
-    budget: optNumber('Assigned budget'),
     requiredLeads: optNumber('Required leads'),
-    requiredCpl: optNumber('Required CPL'),
     performanceParameter: opt(200),
     targetApplication: optNumber('Target applications'),
     targetAdmission: opt(200),
 
     // ── Dates ─────────────────────────────────────────────────────────────
     startDate: z.string().min(1, 'Pick the client onboarding date'),
-    endDate: z.string().optional(),
     applicationDeadline: opt(200),
     focusedMonths: opt(200),
 
     // ── Targeting ─────────────────────────────────────────────────────────
-    targetAudience: z.string().trim().min(2, 'Describe who the ads should reach').max(1000),
     ageRestriction: z.enum(['OPEN', 'AGE_18_24']).optional(),
     location: z.string().trim().min(2, 'Where should the ads run?').max(500),
     blockedLocations: opt(5000),
@@ -114,8 +101,6 @@ const schema = z
     adUrlClientlpBing: urlField,
 
     // ── Free text ─────────────────────────────────────────────────────────
-    keywords: opt(5000),
-    usps: opt(2000),
     notes: opt(5000),
 
     leadTargets: z
@@ -161,7 +146,6 @@ export function AdRequestForm({
   } = useForm<AdRequestFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
-      objective: 'LEAD_GENERATION',
       ageRestriction: 'OPEN',
       startDate: new Date().toISOString().slice(0, 10),
       leadTargets: [],
@@ -180,14 +164,10 @@ export function AdRequestForm({
 
     const payload = {
       ...values,
-      accountId: values.accountId && values.accountId !== 'none' ? Number(values.accountId) : null,
       clientType: values.clientType ?? null,
       ageRestriction: values.ageRestriction ?? 'OPEN',
-      budget: num(values.budget),
       requiredLeads: num(values.requiredLeads),
-      requiredCpl: num(values.requiredCpl),
       targetApplication: num(values.targetApplication),
-      endDate: values.endDate || null,
       trackingId: str(values.trackingId),
       performanceParameter: str(values.performanceParameter),
       targetAdmission: str(values.targetAdmission),
@@ -196,8 +176,6 @@ export function AdRequestForm({
       blockedLocations: str(values.blockedLocations),
       accountVisibility: str(values.accountVisibility),
       reportingPanel: str(values.reportingPanel),
-      usps: str(values.usps),
-      keywords: str(values.keywords),
       notes: str(values.notes),
       // Drop half-filled rows rather than sending a month with no number.
       leadTargets: (values.leadTargets ?? [])
@@ -236,8 +214,6 @@ export function AdRequestForm({
     }
   }
 
-  const objective = watch('objective');
-  const accountId = watch('accountId');
   const clientType = watch('clientType');
   const ageRestriction = watch('ageRestriction');
 
@@ -285,39 +261,6 @@ export function AdRequestForm({
             <Input id="productService" placeholder="MBA/PGDM" {...register('productService')} />
           </Field>
 
-          <Field id="accountId" label="Google Ads account" error={errors.accountId?.message}>
-            <Select value={accountId ?? 'none'} onValueChange={(v) => setValue('accountId', v)}>
-              <SelectTrigger id="accountId">
-                <SelectValue placeholder="Not linked yet" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Not linked yet</SelectItem>
-                {(accountData?.accounts ?? []).map((a) => (
-                  <SelectItem key={a.id} value={String(a.id)}>
-                    {a.name ?? a.customerId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-
-          <Field id="objective" label="Campaign objective" error={errors.objective?.message}>
-            <Select
-              value={objective}
-              onValueChange={(v) => setValue('objective', v as AdRequestFormValues['objective'])}
-            >
-              <SelectTrigger id="objective">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(OBJECTIVE_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
         </CardContent>
       </Card>
 
@@ -331,14 +274,8 @@ export function AdRequestForm({
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field id="budget" label="Assigned budget (₹)" error={errors.budget?.message}>
-            <Input id="budget" inputMode="decimal" placeholder="Set at the budget stage" {...register('budget')} />
-          </Field>
           <Field id="requiredLeads" label="Required leads" error={errors.requiredLeads?.message}>
             <Input id="requiredLeads" inputMode="numeric" placeholder="100" {...register('requiredLeads')} />
-          </Field>
-          <Field id="requiredCpl" label="Required CPL (₹)" error={errors.requiredCpl?.message}>
-            <Input id="requiredCpl" inputMode="decimal" placeholder="Set at the budget stage" {...register('requiredCpl')} />
           </Field>
           <Field
             id="performanceParameter"
@@ -374,9 +311,6 @@ export function AdRequestForm({
           <Field id="startDate" label="Client onboarding date" error={errors.startDate?.message}>
             <Input id="startDate" type="date" {...register('startDate')} />
           </Field>
-          <Field id="endDate" label="End date" hint="Optional." error={errors.endDate?.message}>
-            <Input id="endDate" type="date" {...register('endDate')} />
-          </Field>
           <Field
             id="applicationDeadline"
             label="Application deadline"
@@ -397,20 +331,6 @@ export function AdRequestForm({
           <CardTitle className="text-base">Targeting</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field
-            id="targetAudience"
-            label="Target audience"
-            className="sm:col-span-2"
-            error={errors.targetAudience?.message}
-          >
-            <Textarea
-              id="targetAudience"
-              rows={2}
-              placeholder="Graduates in Delhi NCR applying for MBA 2027"
-              {...register('targetAudience')}
-            />
-          </Field>
-
           <Field id="ageRestriction" label="Age restriction" error={errors.ageRestriction?.message}>
             <Select
               value={ageRestriction ?? 'OPEN'}
@@ -562,17 +482,6 @@ export function AdRequestForm({
           <CardTitle className="text-base">Keywords and remarks</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <Field
-            id="keywords"
-            label="Any specific keyword"
-            hint="Needing primary focus — related exam, programme, and so on."
-            error={errors.keywords?.message}
-          >
-            <Textarea id="keywords" rows={3} {...register('keywords')} />
-          </Field>
-          <Field id="usps" label="USPs and offers" error={errors.usps?.message}>
-            <Textarea id="usps" rows={2} {...register('usps')} />
-          </Field>
           <Field id="notes" label="Remarks" error={errors.notes?.message}>
             <Textarea
               id="notes"

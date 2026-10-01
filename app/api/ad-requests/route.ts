@@ -127,7 +127,7 @@ export async function POST(req: Request) {
         applicationDeadline: body.applicationDeadline ?? null,
         focusedMonths: body.focusedMonths ?? null,
 
-        targetAudience: body.targetAudience,
+        targetAudience: body.targetAudience ?? null,
         ageRestriction: body.ageRestriction ?? 'OPEN',
         location: body.location,
         blockedLocations: body.blockedLocations ?? null,

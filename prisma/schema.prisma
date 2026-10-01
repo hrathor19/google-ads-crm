@@ -952,7 +952,9 @@ model CrmAdRequest {
   accountId Int?   @map("account_id")
 
   productService String    @map("product_service")
-  targetAudience String    @map("target_audience")
+  /// Nullable: no longer asked for on the Ops requirement form. Kept for the
+  /// rows that have it and for the ad-copy generator, which uses it when set.
+  targetAudience String?   @map("target_audience")
   location       String
   /// Nullable: the sheet leaves "Assigned Budget" blank at submission and Ops
   /// applies it at the budget stage of the flow.

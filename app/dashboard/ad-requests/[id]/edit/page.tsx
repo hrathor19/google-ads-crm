@@ -82,18 +82,11 @@ export default function EditAdRequestPage({ params }: { params: { id: string } }
             requestId={params.id}
             defaults={{
               title: data.request.title,
-              accountId: data.request.accountId ? String(data.request.accountId) : 'none',
-              objective: data.request.objective as never,
               productService: data.request.productService,
-              targetAudience: data.request.targetAudience,
               location: data.request.location,
               // Every numeric field round-trips through the form as a string:
               // the inputs are plain text boxes, per the requirement sheet.
-              budget: data.request.budget != null ? String(data.request.budget) : '',
               startDate: data.request.startDate.slice(0, 10),
-              endDate: data.request.endDate?.slice(0, 10) ?? '',
-              usps: data.request.usps ?? '',
-              keywords: data.request.keywords ?? '',
               notes: data.request.notes ?? '',
 
               trackingId: data.request.trackingId ?? '',
@@ -101,7 +94,6 @@ export default function EditAdRequestPage({ params }: { params: { id: string } }
               ageRestriction: (data.request.ageRestriction ?? 'OPEN') as never,
               requiredLeads:
                 data.request.requiredLeads != null ? String(data.request.requiredLeads) : '',
-              requiredCpl: data.request.requiredCpl != null ? String(data.request.requiredCpl) : '',
               performanceParameter: data.request.performanceParameter ?? '',
               targetApplication:
                 data.request.targetApplication != null

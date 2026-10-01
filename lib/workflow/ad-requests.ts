@@ -148,7 +148,7 @@ export type CreateRequestInput = {
   title: string;
   clientType: AdRequestClientType | null;
   accountId: number | null;
-  objective: Prisma.CrmAdRequestCreateInput['objective'];
+  objective?: Prisma.CrmAdRequestCreateInput['objective'];
   productService: string;
 
   budget: number | null;
@@ -163,7 +163,7 @@ export type CreateRequestInput = {
   applicationDeadline: string | null;
   focusedMonths: string | null;
 
-  targetAudience: string;
+  targetAudience: string | null;
   ageRestriction: AdRequestAgeRestriction | null;
   location: string;
   blockedLocations: string | null;
@@ -198,7 +198,8 @@ export async function createRequest(
         status: 'DRAFT',
         title: input.title,
         accountId: input.accountId,
-        objective: input.objective,
+        // Falls back to the column default when the form does not ask.
+        ...(input.objective ? { objective: input.objective } : {}),
         productService: input.productService,
         targetAudience: input.targetAudience,
         location: input.location,
