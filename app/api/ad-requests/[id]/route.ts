@@ -65,9 +65,25 @@ const detailSelect = {
   accountId: true,
   createdById: true,
   assignedToId: true,
+  accountManagerId: true,
+  adSpecialistId: true,
+  version: true,
+  reviewRound: true,
   account: { select: { id: true, descriptive_name: true, customer_id: true } },
   createdBy: { select: { id: true, name: true, email: true } },
   assignedTo: { select: { id: true, name: true, email: true } },
+  accountManager: { select: { id: true, name: true, email: true } },
+  adSpecialist: { select: { id: true, name: true, email: true } },
+  reviewRounds: {
+    orderBy: { round: 'asc' },
+    select: {
+      round: true,
+      outcome: true,
+      remarks: true,
+      reviewedAt: true,
+      reviewer: { select: { name: true, email: true } },
+    },
+  },
 } as const;
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {

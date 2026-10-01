@@ -32,9 +32,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
+import { cn } from '@/lib/utils';
 import { PageHeader } from '@/components/data/page-header';
+import {
+  TransitionDialog,
+  stepNeedsDialog,
+  type TransitionPayload,
+} from '@/components/data/transition-dialog';
 import { ErrorState } from '@/components/data/states';
-import { OBJECTIVE_LABELS, RequestStatusBadge, REQUEST_STATUS_LABELS } from '@/components/data/status-badge';
+import { OBJECTIVE_LABELS, RequestStatusBadge, REQUEST_ACTION_LABELS,
+  REQUEST_STATUS_LABELS } from '@/components/data/status-badge';
 import {
   AssetList,
   D_MAX,
@@ -71,6 +78,18 @@ type RequestDetail = {
   accountName: string | null;
   createdBy: { id: string; name: string; email: string };
   assignedTo: { id: string; name: string; email: string } | null;
+  accountManager: { id: string; name: string; email: string } | null;
+  adSpecialist: { id: string; name: string; email: string } | null;
+  /** Optimistic lock, sent back with every transition. */
+  version: number;
+  reviewRound: number;
+  reviewRounds: Array<{
+    round: number;
+    outcome: string;
+    remarks: string | null;
+    reviewedAt: string;
+    reviewer: { name: string; email: string };
+  }>;
   events: Array<{
     id: string;
     type: string;
@@ -102,7 +121,6 @@ type Response = {
 };
 
 /** A transition that needs a typed reason before it can be sent. */
-const NEEDS_REASON = new Set(['REJECTED', 'CHANGES_REQUESTED']);
 
 export default function AdRequestDetailPage({ params }: { params: { id: string } }) {
   const queryClient = useQueryClient();
@@ -149,17 +167,18 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
     queryClient.invalidateQueries({ queryKey: ['notifications'] });
   };
 
-  async function runTransition(target: string, withReason?: string) {
+  async function runTransition(target: string, payload: TransitionPayload = {}) {
     setBusy(true);
     try {
       await apiSend(`/api/ad-requests/${params.id}/transition`, 'POST', {
         target,
-        reason: withReason ?? null,
-        linkedCampaignId: target === 'LIVE' && linkedCampaignId ? linkedCampaignId : undefined,
+        ...payload,
+        // The version the page was rendered from, so two people acting at
+        // once cannot both succeed.
+        expectedVersion: data?.request.version ?? null,
       });
       toast({ title: `Request ${REQUEST_STATUS_LABELS[target]?.toLowerCase() ?? target}` });
       setPendingTransition(null);
-      setReason('');
       invalidate();
     } catch (e) {
       toast({
@@ -283,7 +302,17 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       <Card className="mb-4">
         <CardContent className="flex flex-wrap items-center gap-3 p-4">
           <RequestStatusBadge status={r.status} />
-          {r.assignedTo && (
+          {r.accountManager && (
+            <Badge variant="outline" className="font-normal">
+              AM: {r.accountManager.name}
+            </Badge>
+          )}
+          {r.adSpecialist && (
+            <Badge variant="outline" className="font-normal">
+              Specialist: {r.adSpecialist.name}
+            </Badge>
+          )}
+          {!r.accountManager && !r.adSpecialist && r.assignedTo && (
             <Badge variant="outline" className="font-normal">
               Owner: {r.assignedTo.name}
             </Badge>
@@ -301,19 +330,21 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
                 key={t}
                 size="sm"
                 variant={
-                  t === 'APPROVED' ? 'default' : t === 'REJECTED' ? 'destructive' : 'outline'
+                  t === 'REVIEW_APPROVED'
+                    ? 'default'
+                    : t === 'REJECTED'
+                      ? 'destructive'
+                      : 'outline'
                 }
                 disabled={busy}
                 onClick={() =>
-                  NEEDS_REASON.has(t) || t === 'LIVE'
-                    ? setPendingTransition(t)
-                    : runTransition(t)
+                  stepNeedsDialog(t) ? setPendingTransition(t) : runTransition(t)
                 }
               >
-                {t === 'APPROVED' && <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+                {t === 'REVIEW_APPROVED' && <Check className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
                 {t === 'REJECTED' && <X className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
                 {t === 'SUBMITTED' && <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
-                {REQUEST_STATUS_LABELS[t] ?? t}
+                {REQUEST_ACTION_LABELS[t] ?? REQUEST_STATUS_LABELS[t] ?? t}
               </Button>
             ))}
           </div>
@@ -352,6 +383,12 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
                   {r.landingScores[0]!.score}
                 </span>
               )}
+            </TabsTrigger>
+          )}
+          {r.reviewRounds.length > 0 && (
+            <TabsTrigger value="reviews">
+              Reviews
+              <span className="ml-1.5 text-xs text-muted-foreground">{r.reviewRounds.length}</span>
             </TabsTrigger>
           )}
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
@@ -584,6 +621,44 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
           </TabsContent>
         )}
 
+        {/* ─── Review rounds ─────────────────────────────────────────── */}
+        <TabsContent value="reviews" className="space-y-4">
+          <Card>
+            <CardContent className="space-y-3 p-4">
+              <p className="text-sm text-muted-foreground">
+                Every round of the recheck loop, oldest first. Round {r.reviewRound} is the one
+                currently open.
+              </p>
+              {r.reviewRounds.map((rev) => (
+                <div
+                  key={rev.round}
+                  className={cn(
+                    'rounded-lg border p-3',
+                    rev.outcome === 'APPROVED'
+                      ? 'border-emerald-500/30 bg-emerald-500/5'
+                      : 'border-amber-500/30 bg-amber-500/5'
+                  )}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium">
+                      Round {rev.round} —{' '}
+                      {rev.outcome === 'APPROVED' ? 'approved' : 'sent back for a recheck'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {rev.reviewer.name} · {formatDate(rev.reviewedAt)}
+                    </p>
+                  </div>
+                  {rev.remarks && (
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                      {rev.remarks}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* ─── Timeline ──────────────────────────────────────────────── */}
         <TabsContent value="timeline" className="space-y-4">
           <Card>
@@ -638,69 +713,12 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       </Tabs>
 
       {/* Reason / campaign-link dialog */}
-      <Dialog open={pendingTransition !== null} onOpenChange={(o) => !o && setPendingTransition(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {pendingTransition === 'REJECTED'
-                ? 'Reject this request'
-                : pendingTransition === 'CHANGES_REQUESTED'
-                  ? 'Request changes'
-                  : 'Mark as live'}
-            </DialogTitle>
-            <DialogDescription>
-              {pendingTransition === 'LIVE'
-                ? 'Link the Google Ads campaign you created, so the request and the campaign stay connected.'
-                : 'The person who raised this will see exactly what you write here.'}
-            </DialogDescription>
-          </DialogHeader>
-
-          {pendingTransition === 'LIVE' ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="campaignId">Google Ads campaign ID</Label>
-              <Input
-                id="campaignId"
-                value={linkedCampaignId}
-                onChange={(e) => setLinkedCampaignId(e.target.value)}
-                placeholder="e.g. 21345678901"
-              />
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <Label htmlFor="reason">
-                Reason <span className="text-destructive">*</span>
-              </Label>
-              <Textarea
-                id="reason"
-                rows={4}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={
-                  pendingTransition === 'REJECTED'
-                    ? 'Why is this being rejected?'
-                    : 'What needs to change before this can be approved?'
-                }
-              />
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPendingTransition(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant={pendingTransition === 'REJECTED' ? 'destructive' : 'default'}
-              disabled={
-                busy || (pendingTransition !== 'LIVE' && !reason.trim())
-              }
-              onClick={() => runTransition(pendingTransition!, reason.trim() || undefined)}
-            >
-              {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
-              Confirm
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TransitionDialog
+        target={pendingTransition}
+        busy={busy}
+        onCancel={() => setPendingTransition(null)}
+        onConfirm={(payload) => runTransition(pendingTransition!, payload)}
+      />
     </>
   );
 }
