@@ -597,7 +597,63 @@ export async function fetchKeywordMetrics(customerId: string, start: Date, end: 
  * Search terms are inherently date-segmented report rows; one query returns
  * both the dimension identity (query + ad group) and the daily metrics.
  */
+/**
+ * Node cannot hold a string longer than 0x1fffffe8 characters (~512MB), and
+ * the google-ads-api client builds exactly that: `useStreamToImitateRegularSearch`
+ * concatenates the whole streamed response and calls `Buffer.toString()` on
+ * it. One busy account-month of search terms is enough to exceed it —
+ * account 4977477790 for 2025-09, with 50,928 clicks, threw
+ *
+ *   Cannot create a string longer than 0x1fffffe8 characters
+ *     at Buffer.toString (node:buffer)
+ *     at Customer.useStreamToImitateRegularSearch
+ *
+ * and lost the month. The response size is what matters, not the row count,
+ * so the only reliable fix is to ask for a narrower window.
+ */
+function isResponseTooLarge(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err);
+  return m.includes('Cannot create a string longer than');
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Fetch a window, halving it whenever the response is too large to hold.
+ *
+ * Recurses down to a single day. A single day that still overflows is beyond
+ * anything this API can return in one call, so it is re-thrown rather than
+ * silently dropped.
+ */
+export async function fetchWindowSplitting<T>(
+  start: Date,
+  end: Date,
+  fetchOne: (s: Date, e: Date) => Promise<T[]>
+): Promise<T[]> {
+  try {
+    return await fetchOne(start, end);
+  } catch (err) {
+    if (!isResponseTooLarge(err)) throw err;
+    if (start.getTime() >= end.getTime()) throw err;
+
+    const mid = new Date(start.getTime() + Math.floor((end.getTime() - start.getTime()) / 2 / DAY_MS) * DAY_MS);
+    const firstEnd = mid.getTime() <= start.getTime() ? start : mid;
+    const secondStart = new Date(firstEnd.getTime() + DAY_MS);
+    if (secondStart.getTime() > end.getTime()) throw err;
+
+    const [a, b] = await Promise.all([
+      fetchWindowSplitting(start, firstEnd, fetchOne),
+      fetchWindowSplitting(secondStart, end, fetchOne),
+    ]);
+    return [...a, ...b];
+  }
+}
+
 export async function fetchSearchTerms(customerId: string, start: Date, end: Date) {
+  return fetchWindowSplitting(start, end, (s, e) => fetchSearchTermsOnce(customerId, s, e));
+}
+
+async function fetchSearchTermsOnce(customerId: string, start: Date, end: Date) {
   const query = `
     SELECT
       search_term_view.search_term,
