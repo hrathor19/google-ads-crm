@@ -48,7 +48,16 @@ async function rowsInWindow(table: string, accountId: number, start: Date, end: 
 }
 
 async function main() {
-  const month = arg('month') ?? new Date().toISOString().slice(0, 7);
+  // Default to the latest month that actually holds data, not the calendar
+  // month: on the 1st, and any time a sync is behind, the current month is
+  // empty and the check cannot run at all.
+  let month = arg('month');
+  if (!month) {
+    const latest = await prisma.$queryRawUnsafe<Array<{ m: string }>>(
+      `SELECT to_char(max(snapshot_date), 'YYYY-MM') AS m FROM campaign_snapshots`
+    );
+    month = latest[0]?.m ?? new Date().toISOString().slice(0, 7);
+  }
   const { start, end } = monthRange(month);
 
   // Default to the account with the most recent activity: an idle account
