@@ -185,8 +185,19 @@ export function primaryLandingUrl(v: {
 export const transitionSchema = z.object({
   target: z.nativeEnum(AdRequestStatus),
   reason: z.string().trim().max(2000).nullable().optional(),
-  assignToId: z.string().cuid().nullable().optional(),
+  /** Step 3 and step 11 respectively. */
+  accountManagerId: z.string().cuid().nullable().optional(),
+  adSpecialistId: z.string().cuid().nullable().optional(),
+  /** Step 10. */
+  budget: z.coerce.number().positive().max(1_000_000_000).nullable().optional(),
+  requiredCpl: z.coerce.number().positive().max(10_000_000).nullable().optional(),
+  /** Step 12. */
   linkedCampaignId: z.string().trim().max(64).nullable().optional(),
+  /**
+   * The version the client last rendered. Sent so two people acting at once
+   * cannot both succeed; omitted by scripts that do not track it.
+   */
+  expectedVersion: z.coerce.number().int().min(0).nullable().optional(),
 });
 
 export const commentSchema = z.object({

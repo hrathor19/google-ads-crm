@@ -20,18 +20,17 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
     const updated = await transition(principal, params.id, body.target, {
       reason: body.reason ?? null,
-      assignToId: body.assignToId ?? null,
+      accountManagerId: body.accountManagerId ?? null,
+      adSpecialistId: body.adSpecialistId ?? null,
+      budget: body.budget ?? null,
+      requiredCpl: body.requiredCpl ?? null,
+      // Goes *into* the transition, not after it: going live requires the
+      // campaign id, so writing it afterwards left the check looking at a
+      // request that did not have one yet.
+      linkedCampaignId: body.linkedCampaignId ?? null,
+      expectedVersion: body.expectedVersion ?? null,
       ip: clientIp(req),
     });
-
-    // The Google Ads campaign id is captured on the same screen the Ads team
-    // marks a request live from, so it rides along with the transition.
-    if (body.linkedCampaignId !== undefined) {
-      await prisma.crmAdRequest.update({
-        where: { id: params.id },
-        data: { linkedCampaignId: body.linkedCampaignId || null },
-      });
-    }
 
     return updated;
   });

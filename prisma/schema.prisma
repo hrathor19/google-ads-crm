@@ -749,16 +749,39 @@ model users {
 // never collide.
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// The Ad Setup & Approval flow, step for step.
+///
+/// CHANGES_REQUESTED, APPROVED, IN_PROGRESS and READY are the earlier,
+/// shorter pipeline. Postgres cannot drop an enum value that rows may still
+/// reference, so they stay here but are unreachable: nothing in TRANSITIONS
+/// moves to them, and the migration maps the rows that held them.
 enum AdRequestStatus {
   DRAFT
   SUBMITTED
-  CHANGES_REQUESTED
-  APPROVED
-  REJECTED
-  IN_PROGRESS
-  READY
+  AWAITING_AM_ASSIGNMENT
+  AM_ASSIGNED
+  AWAITING_AD_SUBMISSION
+  ADS_SUBMITTED
+  UNDER_REVIEW
+  RECHECK_REQUESTED
+  REVIEW_APPROVED
+  BUDGET_APPROVED
+  ACCOUNT_ASSIGNED
   LIVE
   COMPLETED
+  REJECTED
+
+  // Retired.
+  CHANGES_REQUESTED
+  APPROVED
+  IN_PROGRESS
+  READY
+}
+
+/// How one review round ended.
+enum ReviewOutcome {
+  APPROVED
+  RECHECK_REQUESTED
 }
 
 /// Who a notification mail goes to, besides any fixed addresses.
@@ -983,14 +1006,17 @@ model CrmUser {
   role          CrmRole          @relation(fields: [roleId], references: [id])
   accountScopes CrmUserAccount[]
 
-  requestsCreated  CrmAdRequest[]      @relation("requestCreatedBy")
-  requestsAssigned CrmAdRequest[]      @relation("requestAssignedTo")
-  events           CrmAdRequestEvent[]
-  adCopyVersions   CrmAdCopyVersion[]
-  landingScores    CrmLandingScore[]
-  notifications    CrmNotification[]
-  emailSettings    CrmEmailSetting[]   @relation("emailSettingUpdatedBy")
-  auditLogs        CrmAuditLog[]
+  requestsCreated    CrmAdRequest[]       @relation("requestCreatedBy")
+  requestsAssigned   CrmAdRequest[]       @relation("requestAssignedTo")
+  events             CrmAdRequestEvent[]
+  adCopyVersions     CrmAdCopyVersion[]
+  landingScores      CrmLandingScore[]
+  notifications      CrmNotification[]
+  managedRequests    CrmAdRequest[]       @relation("requestAccountManager")
+  specialistRequests CrmAdRequest[]       @relation("requestAdSpecialist")
+  reviewsGiven       CrmAdRequestReview[] @relation("reviewBy")
+  emailSettings      CrmEmailSetting[]    @relation("emailSettingUpdatedBy")
+  auditLogs          CrmAuditLog[]
 
   @@index([roleId])
   @@map("crm_users")
@@ -1085,17 +1111,36 @@ model CrmAdRequest {
   completedAt    DateTime? @map("completed_at")
 
   createdById  String  @map("created_by_id")
+  /// Kept as the general "who owns this now" pointer the lists sort on.
   assignedToId String? @map("assigned_to_id")
+
+  /// The flow has two distinct owners, assigned at different steps, so one
+  /// field cannot hold both: the Account Manager at step 3, and the Ad
+  /// Specialist who builds and launches, formally assigned at step 11.
+  accountManagerId String? @map("account_manager_id")
+  adSpecialistId   String? @map("ad_specialist_id")
+
+  /// Optimistic lock. Every transition reads it and writes it back in the
+  /// same UPDATE, so two people approving at once cannot both succeed —
+  /// the second finds the row already moved on.
+  version Int @default(0)
+
+  /// Which review round the request is on. Increments each time the ads go
+  /// back for a recheck, so round N stays readable.
+  reviewRound Int @default(0) @map("review_round")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  createdBy  CrmUser   @relation("requestCreatedBy", fields: [createdById], references: [id])
-  assignedTo CrmUser?  @relation("requestAssignedTo", fields: [assignedToId], references: [id])
-  account    accounts? @relation(fields: [accountId], references: [id])
+  createdBy      CrmUser   @relation("requestCreatedBy", fields: [createdById], references: [id])
+  assignedTo     CrmUser?  @relation("requestAssignedTo", fields: [assignedToId], references: [id])
+  accountManager CrmUser?  @relation("requestAccountManager", fields: [accountManagerId], references: [id])
+  adSpecialist   CrmUser?  @relation("requestAdSpecialist", fields: [adSpecialistId], references: [id])
+  account        accounts? @relation(fields: [accountId], references: [id])
 
   events         CrmAdRequestEvent[]
   leadTargets    CrmAdRequestLeadTarget[]
+  reviewRounds   CrmAdRequestReview[]
   attachments    CrmAdRequestAttachment[]
   adCopyVersions CrmAdCopyVersion[]
   landingScores  CrmLandingScore[]
@@ -1111,6 +1156,35 @@ model CrmAdRequest {
 
 /// The timeline / activity feed under a request. Comments and transitions share
 /// one table so the feed is a single ordered read.
+/// One pass of the review loop (steps 6-8).
+///
+/// A row per round rather than overwriting, so the third recheck can still
+/// show what was wrong on the first. `adCopyVersion` pins which draft the
+/// remarks applied to.
+model CrmAdRequestReview {
+  id        String @id @default(cuid())
+  requestId String @map("request_id")
+  /// 1 for the first review, incrementing with each recheck.
+  round     Int
+
+  outcome    ReviewOutcome
+  /// Mandatory when the outcome is RECHECK_REQUESTED — enforced in the
+  /// service, because "fix it" with no remark wastes a round.
+  remarks    String?
+  reviewerId String        @map("reviewer_id")
+  reviewedAt DateTime      @default(now()) @map("reviewed_at")
+
+  /// The ad copy version these remarks were written against.
+  adCopyVersionId String? @map("ad_copy_version_id")
+
+  request  CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  reviewer CrmUser      @relation("reviewBy", fields: [reviewerId], references: [id])
+
+  @@unique([requestId, round])
+  @@index([requestId])
+  @@map("crm_ad_request_reviews")
+}
+
 /// The sheet's month-by-month lead plan (Sep26 = 5, Oct26 = 12, …).
 ///
 /// A child table rather than JSON so the months can be aggregated, compared

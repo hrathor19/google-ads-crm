@@ -11,6 +11,14 @@ import { notify, usersWithPermission } from '@/lib/notifications';
 import { ApiError, badRequest, conflict, forbidden, notFound } from '@/lib/api';
 import type { Principal } from '@/lib/rbac/permissions';
 import { hasPermission } from '@/lib/rbac/permissions';
+import {
+  SPECIALIST_QUEUE,
+  STATUS_LABELS,
+  SYSTEM_STEPS,
+  evaluate,
+  findTransition,
+  nextStates,
+} from './state-machine';
 import { primaryLandingUrl } from './schemas';
 
 /**
@@ -27,83 +35,16 @@ import { primaryLandingUrl } from './schemas';
  * Approved → In progress → Ready → Live → Completed
  */
 
-type TransitionRule = {
-  from: AdRequestStatus[];
-  /** `MODULE:ACTION` the actor must hold. */
-  permission: string;
-  /** A rejection or a change request is meaningless without one. */
-  requiresReason?: boolean;
-  /** Only the request's owner (or someone who can approve) may do this. */
-  ownerOnly?: boolean;
-  label: string;
-};
+/**
+ * The transition table now lives in `state-machine.ts`, which is pure and
+ * tested directly. This module keeps the database side: locking, events,
+ * audit and notifications.
+ */
+export { STATUS_LABELS, SPECIALIST_QUEUE, TRANSITIONS } from './state-machine';
+export { evaluate, findTransition, nextStates } from './state-machine';
 
-export const TRANSITIONS: Record<AdRequestStatus, TransitionRule | null> = {
-  DRAFT: null, // the creation state; reached only by createRequest
-  SUBMITTED: {
-    from: ['DRAFT', 'CHANGES_REQUESTED', 'REJECTED'],
-    permission: 'AD_REQUESTS:CREATE',
-    ownerOnly: true,
-    label: 'submitted for approval',
-  },
-  APPROVED: {
-    from: ['SUBMITTED'],
-    permission: 'AD_REQUESTS:APPROVE',
-    label: 'approved',
-  },
-  REJECTED: {
-    from: ['SUBMITTED'],
-    permission: 'AD_REQUESTS:APPROVE',
-    requiresReason: true,
-    label: 'rejected',
-  },
-  CHANGES_REQUESTED: {
-    from: ['SUBMITTED'],
-    permission: 'AD_REQUESTS:APPROVE',
-    requiresReason: true,
-    label: 'sent back for changes',
-  },
-  IN_PROGRESS: {
-    from: ['APPROVED'],
-    permission: 'AD_REQUESTS:EDIT',
-    label: 'picked up by the Google Ads team',
-  },
-  READY: {
-    from: ['IN_PROGRESS'],
-    permission: 'AD_REQUESTS:EDIT',
-    label: 'marked ready',
-  },
-  LIVE: {
-    from: ['READY', 'IN_PROGRESS'],
-    permission: 'AD_REQUESTS:EDIT',
-    label: 'marked live',
-  },
-  COMPLETED: {
-    from: ['LIVE'],
-    permission: 'AD_REQUESTS:EDIT',
-    label: 'completed',
-  },
-};
-
-/** Statuses the Ads team's queue is built from. */
-export const ADS_QUEUE_STATUSES: AdRequestStatus[] = [
-  'APPROVED',
-  'IN_PROGRESS',
-  'READY',
-  'LIVE',
-];
-
-export const STATUS_LABELS: Record<AdRequestStatus, string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Pending approval',
-  CHANGES_REQUESTED: 'Changes requested',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-  IN_PROGRESS: 'In progress',
-  READY: 'Ready',
-  LIVE: 'Live',
-  COMPLETED: 'Completed',
-};
+/** Kept for the Ads team queue page, which imported the old name. */
+export const ADS_QUEUE_STATUSES = SPECIALIST_QUEUE;
 
 /** Which statuses the actor can move this request to right now. */
 export async function availableTransitions(
@@ -111,15 +52,15 @@ export async function availableTransitions(
   request: { status: AdRequestStatus; createdById: string }
 ): Promise<AdRequestStatus[]> {
   const out: AdRequestStatus[] = [];
-  for (const [target, rule] of Object.entries(TRANSITIONS) as Array<
-    [AdRequestStatus, TransitionRule | null]
-  >) {
+  for (const target of nextStates(request.status)) {
+    const rule = findTransition(request.status, target);
     if (!rule) continue;
-    if (!rule.from.includes(request.status)) continue;
     if (rule.ownerOnly && request.createdById !== principal.userId && !principal.isSuperAdmin) {
       continue;
     }
-    if (!(await hasPermission(principal, rule.permission))) continue;
+    if (rule.permission && !principal.isSuperAdmin && !(await hasPermission(principal, rule.permission))) {
+      continue;
+    }
     out.push(target);
   }
   return out;
@@ -277,63 +218,149 @@ export async function createRequest(
  * has to act, and records an audit row — all in one place so none of them can
  * be skipped by a new caller.
  */
+export type TransitionOptions = {
+  reason?: string | null;
+  /** Step 3 and step 11: who owns this next. */
+  accountManagerId?: string | null;
+  adSpecialistId?: string | null;
+  /** Step 10. */
+  budget?: number | null;
+  requiredCpl?: number | null;
+  /** Step 12. */
+  linkedCampaignId?: string | null;
+  /** The version the caller last saw. Omit to skip the concurrency check. */
+  expectedVersion?: number | null;
+  ip?: string | null;
+};
+
+/**
+ * Move a request one step, then follow any system step that comes after.
+ *
+ * Concurrency: the UPDATE matches on `version` as well as `id`, so two people
+ * approving the same request at once cannot both succeed — the second finds
+ * zero rows affected and is told the request moved on. Previously this read
+ * the row, validated, then wrote, with nothing between the two.
+ */
 export async function transition(
   principal: Principal,
   requestId: string,
   target: AdRequestStatus,
-  opts: { reason?: string | null; assignToId?: string | null; ip?: string | null } = {}
+  opts: TransitionOptions = {}
 ) {
-  const rule = TRANSITIONS[target];
-  if (!rule) throw badRequest(`Cannot move a request to ${target}.`);
-
   const request = await prisma.crmAdRequest.findUnique({
     where: { id: requestId },
-    select: { id: true, reference: true, title: true, status: true, createdById: true, assignedToId: true },
+    select: {
+      id: true, reference: true, title: true, status: true, version: true,
+      createdById: true, assignedToId: true, accountManagerId: true,
+      adSpecialistId: true, budget: true, requiredCpl: true,
+      linkedCampaignId: true, reviewRound: true,
+    },
   });
   if (!request) throw notFound('Ad request not found.');
 
-  if (!rule.from.includes(request.status)) {
-    throw conflict(
-      `A request that is "${STATUS_LABELS[request.status]}" cannot be ${rule.label}.`
-    );
+  if (
+    opts.expectedVersion !== undefined &&
+    opts.expectedVersion !== null &&
+    opts.expectedVersion !== request.version
+  ) {
+    throw conflict('Someone else changed this request while you were looking at it. Reload and try again.');
   }
-  if (rule.ownerOnly && request.createdById !== principal.userId && !principal.isSuperAdmin) {
-    throw forbidden('Only the person who raised this request can submit it.');
+
+  // What the request will look like once the payload is applied, so a
+  // requirement can be satisfied by this very call.
+  const provided = {
+    reason: opts.reason ?? null,
+    accountManagerId: opts.accountManagerId ?? request.accountManagerId,
+    adSpecialistId: opts.adSpecialistId ?? request.adSpecialistId,
+    budget: opts.budget ?? (request.budget != null ? Number(request.budget) : null),
+    requiredCpl: opts.requiredCpl ?? (request.requiredCpl != null ? Number(request.requiredCpl) : null),
+    linkedCampaignId: opts.linkedCampaignId ?? request.linkedCampaignId,
+  };
+
+  const granted = new Map<string, boolean>();
+  const rule = findTransition(request.status, target);
+  if (rule?.permission) {
+    granted.set(rule.permission, await hasPermission(principal, rule.permission));
   }
-  if (!(await hasPermission(principal, rule.permission))) {
-    throw forbidden(`Requires the "${rule.permission}" permission.`);
+
+  const verdict = evaluate({
+    from: request.status,
+    to: target,
+    isOwner: request.createdById === principal.userId,
+    isSuperAdmin: principal.isSuperAdmin,
+    hasPermission: (f) => granted.get(f) ?? false,
+    provided,
+  });
+
+  if (!verdict.ok) {
+    if (verdict.code === 'ILLEGAL') throw conflict(verdict.message);
+    if (verdict.code === 'FORBIDDEN') throw forbidden(verdict.message);
+    throw badRequest(verdict.message);
   }
 
   const reason = (opts.reason ?? '').trim();
-  if (rule.requiresReason && !reason) {
-    throw badRequest(
-      target === 'REJECTED'
-        ? 'A rejection needs a reason — the person who raised it has to know what to fix.'
-        : 'Say what needs changing.'
-    );
-  }
-
   const now = new Date();
-  const data: Prisma.CrmAdRequestUpdateInput = { status: target };
-  if (reason) data.decisionReason = reason;
-  if (target === 'SUBMITTED') {
-    data.submittedAt = now;
-    // A resubmission supersedes the previous decision; leaving the old reason
-    // on screen would read as if it still applied.
-    data.decisionReason = reason || null;
-    data.decidedAt = null;
-  }
-  if (['APPROVED', 'REJECTED', 'CHANGES_REQUESTED'].includes(target)) data.decidedAt = now;
-  if (target === 'COMPLETED') data.completedAt = now;
-  if (target === 'IN_PROGRESS' && !request.assignedToId) {
-    // Whoever picks a request up owns it, unless it was already assigned.
-    data.assignedTo = { connect: { id: opts.assignToId ?? principal.userId } };
-  } else if (opts.assignToId) {
-    data.assignedTo = { connect: { id: opts.assignToId } };
-  }
 
   const updated = await prisma.$transaction(async (tx) => {
-    const row = await tx.crmAdRequest.update({ where: { id: requestId }, data });
+    const data: Prisma.CrmAdRequestUncheckedUpdateInput = {
+      status: target,
+      version: { increment: 1 },
+    };
+    if (reason) data.decisionReason = reason;
+    if (target === 'SUBMITTED') {
+      data.submittedAt = now;
+      // A resubmission supersedes the previous decision; leaving the old
+      // reason on screen would read as if it still applied.
+      data.decisionReason = reason || null;
+      data.decidedAt = null;
+    }
+    if (['REVIEW_APPROVED', 'REJECTED', 'RECHECK_REQUESTED'].includes(target)) data.decidedAt = now;
+    if (target === 'COMPLETED') data.completedAt = now;
+
+    if (opts.accountManagerId) {
+      data.accountManagerId = opts.accountManagerId;
+      data.assignedToId = opts.accountManagerId;
+    }
+    if (opts.adSpecialistId) {
+      data.adSpecialistId = opts.adSpecialistId;
+      data.assignedToId = opts.adSpecialistId;
+    }
+    if (opts.budget != null) data.budget = opts.budget;
+    if (opts.requiredCpl != null) data.requiredCpl = opts.requiredCpl;
+    if (opts.linkedCampaignId) data.linkedCampaignId = opts.linkedCampaignId;
+
+    // A new review round opens each time the ads are submitted.
+    if (target === 'ADS_SUBMITTED') data.reviewRound = { increment: 1 };
+
+    // The lock: only update the row still at the version we validated.
+    const count = await tx.crmAdRequest.updateMany({
+      where: { id: requestId, version: request.version },
+      data,
+    });
+    if (count.count === 0) {
+      throw conflict('Someone else moved this request while you were acting on it. Reload and try again.');
+    }
+
+    // Steps 7 and 9 close a review round, with its remarks and the draft it
+    // applied to, so the history survives the next recheck.
+    if (target === 'RECHECK_REQUESTED' || target === 'REVIEW_APPROVED') {
+      await tx.crmAdRequestReview.upsert({
+        where: { requestId_round: { requestId, round: Math.max(1, request.reviewRound) } },
+        create: {
+          requestId,
+          round: Math.max(1, request.reviewRound),
+          outcome: target === 'REVIEW_APPROVED' ? 'APPROVED' : 'RECHECK_REQUESTED',
+          remarks: reason || null,
+          reviewerId: principal.userId,
+        },
+        update: {
+          outcome: target === 'REVIEW_APPROVED' ? 'APPROVED' : 'RECHECK_REQUESTED',
+          remarks: reason || null,
+          reviewerId: principal.userId,
+        },
+      });
+    }
+
     await tx.crmAdRequestEvent.create({
       data: {
         requestId,
@@ -342,22 +369,43 @@ export async function transition(
             ? request.status === 'DRAFT'
               ? 'SUBMITTED'
               : 'RESUBMITTED'
-            : target === 'APPROVED'
+            : target === 'REVIEW_APPROVED'
               ? 'APPROVED'
               : target === 'REJECTED'
                 ? 'REJECTED'
-                : target === 'CHANGES_REQUESTED'
+                : target === 'RECHECK_REQUESTED'
                   ? 'CHANGES_REQUESTED'
                   : 'STATUS_CHANGED',
         message: reason
-          ? `${principal.email} ${rule.label}: ${reason}`
-          : `${principal.email} ${rule.label}.`,
+          ? `${principal.email} ${rule!.label}: ${reason}`
+          : `${principal.email} ${rule!.label}.`,
         fromStatus: request.status,
         toStatus: target,
         actorId: principal.userId,
       },
     });
-    return row;
+
+    // Steps 2, 4 and 6: the mail going out is what advances these, so they
+    // follow in the same transaction rather than waiting for a click.
+    const auto = rule!.autoAdvanceTo;
+    if (auto) {
+      await tx.crmAdRequest.updateMany({
+        where: { id: requestId },
+        data: { status: auto, version: { increment: 1 } },
+      });
+      await tx.crmAdRequestEvent.create({
+        data: {
+          requestId,
+          type: 'STATUS_CHANGED',
+          message: `The system ${SYSTEM_STEPS[auto]?.label ?? 'advanced the request'}.`,
+          fromStatus: target,
+          toStatus: auto,
+          actorId: null,
+        },
+      });
+    }
+
+    return tx.crmAdRequest.findUniqueOrThrow({ where: { id: requestId } });
   });
 
   await notifyForTransition(principal, request, target, reason);
@@ -365,11 +413,11 @@ export async function transition(
   const auditAction =
     target === 'SUBMITTED'
       ? 'REQUEST_SUBMITTED'
-      : target === 'APPROVED'
+      : target === 'REVIEW_APPROVED'
         ? 'REQUEST_APPROVED'
         : target === 'REJECTED'
           ? 'REQUEST_REJECTED'
-          : target === 'CHANGES_REQUESTED'
+          : target === 'RECHECK_REQUESTED'
             ? 'REQUEST_CHANGES_REQUESTED'
             : 'REQUEST_STATUS_CHANGED';
 
@@ -377,10 +425,15 @@ export async function transition(
     actorId: principal.userId,
     actorEmail: principal.email,
     action: auditAction,
-    description: `${request.reference} ${rule.label}${reason ? `: ${reason}` : ''}`,
+    description: `${request.reference} — ${principal.email} ${rule!.label}${reason ? `: ${reason}` : ''}`,
     targetType: 'CrmAdRequest',
     targetId: requestId,
-    metadata: { from: request.status, to: target },
+    metadata: {
+      from: request.status,
+      to: target,
+      autoAdvancedTo: rule!.autoAdvanceTo ?? null,
+      round: request.reviewRound,
+    },
     ipAddress: opts.ip,
   });
 

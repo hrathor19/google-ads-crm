@@ -329,70 +329,106 @@ async function main() {
     `/api/ad-requests/${requestId}/transition`,
     { method: 'POST', body: JSON.stringify({ target: 'SUBMITTED' }) }
   );
-  check('Operations submits it for approval', submitted.status === 200 && submitted.body.status === 'SUBMITTED');
+  check(
+    'Operations submits, and the system advances to awaiting an Account Manager',
+    submitted.status === 200 && submitted.body.status === 'AWAITING_AM_ASSIGNMENT',
+    `got ${submitted.body?.status}`
+  );
 
-  // Operations holds AD_REQUESTS:CREATE but not APPROVE.
-  const selfApprove = await opsSession.json(`/api/ad-requests/${requestId}/transition`, {
+  // Ops now holds APPROVE: on the 13-step flow Ops reviews the ads and
+  // applies the budget. What it still cannot do is skip a step.
+  const skipAhead = await opsSession.json(`/api/ad-requests/${requestId}/transition`, {
     method: 'POST',
-    body: JSON.stringify({ target: 'APPROVED' }),
+    body: JSON.stringify({ target: 'LIVE' }),
   });
-  check('Operations cannot approve their own request', selfApprove.status === 403, `got ${selfApprove.status}`);
+  check('A request cannot skip to Live from the start', skipAhead.status === 409, `got ${skipAhead.status}`);
 
-  console.log('\n── Workflow: Manager reviews ──');
+  console.log('\n── Workflow: steps 3-4, the Account Manager ──');
 
-  const mgrList = await managerSession.json<{ rows: Array<{ id: string }> }>(
-    '/api/ad-requests?status=SUBMITTED'
+  const amUser = await ensureUser('e2e.accountmanager@example.com', 'E2E Account Manager', 'manager');
+
+  const noAm = await opsSession.json<{ error: string }>(`/api/ad-requests/${requestId}/transition`, {
+    method: 'POST',
+    body: JSON.stringify({ target: 'AM_ASSIGNED' }),
+  });
+  check('Assigning with nobody named is refused', noAm.status === 400, noAm.body?.error);
+
+  const amAssigned = await opsSession.json<{ status: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED', accountManagerId: amUser.id }) }
   );
   check(
-    'The request is in the manager’s approval queue',
-    mgrList.status === 200 && mgrList.body.rows.some((r) => r.id === requestId)
+    'Ops assigns an Account Manager, and the system advances to awaiting ads',
+    amAssigned.status === 200 && amAssigned.body.status === 'AWAITING_AD_SUBMISSION',
+    `got ${amAssigned.body?.status}`
   );
 
-  const noReason = await managerSession.json<{ error: string }>(
+  console.log('\n── Workflow: steps 5-8, submission and the recheck loop ──');
+
+  const adsSubmitted = await adsSession.json<{ status: string }>(
     `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'REJECTED' }) }
-  );
-  check('A rejection without a reason is refused', noReason.status === 400, noReason.body?.error);
-
-  const changes = await managerSession.json<{ status: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ target: 'CHANGES_REQUESTED', reason: 'Add the application deadline.' }),
-    }
-  );
-  check('Manager can request changes', changes.status === 200 && changes.body.status === 'CHANGES_REQUESTED');
-
-  const opsNotifs = await opsSession.json<{ unread: number }>('/api/notifications');
-  check('Operations is notified of the change request', opsNotifs.body.unread > 0, `${opsNotifs.body.unread} unread`);
-
-  const resubmit = await opsSession.json<{ status: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'SUBMITTED' }) }
-  );
-  check('Operations resubmits after the change', resubmit.status === 200 && resubmit.body.status === 'SUBMITTED');
-
-  const approved = await managerSession.json<{ status: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'APPROVED' }) }
-  );
-  check('Manager approves', approved.status === 200 && approved.body.status === 'APPROVED');
-
-  console.log('\n── Workflow: the Google Ads team works it ──');
-
-  const queue = await adsSession.json<{ rows: Array<{ id: string }> }>(
-    '/api/ad-requests?status=APPROVED,IN_PROGRESS,READY'
+    { method: 'POST', body: JSON.stringify({ target: 'ADS_SUBMITTED' }) }
   );
   check(
-    'The approved request reaches the Ads team queue',
-    queue.status === 200 && queue.body.rows.some((r) => r.id === requestId)
+    'The Ad Specialist submits, and the system opens the review',
+    adsSubmitted.status === 200 && adsSubmitted.body.status === 'UNDER_REVIEW',
+    `got ${adsSubmitted.body?.status}`
   );
 
-  const inProgress = await adsSession.json<{ status: string }>(
+  const noRemark = await opsSession.json<{ error: string }>(
     `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'IN_PROGRESS' }) }
+    { method: 'POST', body: JSON.stringify({ target: 'RECHECK_REQUESTED' }) }
   );
-  check('Ads team picks it up', inProgress.status === 200 && inProgress.body.status === 'IN_PROGRESS');
+  check('A recheck with no remarks is refused', noRemark.status === 400, noRemark.body?.error);
+
+  // Three rounds, as the brief asks for.
+  for (const round of [1, 2, 3]) {
+    const recheck = await opsSession.json<{ status: string }>(
+      `/api/ad-requests/${requestId}/transition`,
+      { method: 'POST', body: JSON.stringify({ target: 'RECHECK_REQUESTED', reason: `Round ${round}: tighten the copy.` }) }
+    );
+    check(`Recheck round ${round} is requested`, recheck.status === 200 && recheck.body.status === 'RECHECK_REQUESTED');
+
+    const again = await adsSession.json<{ status: string }>(
+      `/api/ad-requests/${requestId}/transition`,
+      { method: 'POST', body: JSON.stringify({ target: 'ADS_SUBMITTED' }) }
+    );
+    check(`Round ${round} is resubmitted and back under review`, again.status === 200 && again.body.status === 'UNDER_REVIEW');
+  }
+
+  console.log('\n── Workflow: steps 9-13, budget to live ──');
+
+  const reviewApproved = await opsSession.json<{ status: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'REVIEW_APPROVED' }) }
+  );
+  check('Ops approves the review', reviewApproved.status === 200 && reviewApproved.body.status === 'REVIEW_APPROVED');
+
+  const noBudget = await opsSession.json<{ error: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED' }) }
+  );
+  check('Budget approval with no budget is refused', noBudget.status === 400, noBudget.body?.error);
+
+  const budgetApproved = await opsSession.json<{ status: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED', budget: 250000, requiredCpl: 2500 }) }
+  );
+  check('Ops applies the budget and CPL', budgetApproved.status === 200 && budgetApproved.body.status === 'BUDGET_APPROVED');
+
+  const accountAssigned = await opsSession.json<{ status: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'ACCOUNT_ASSIGNED', adSpecialistId: adsTeam.id }) }
+  );
+  check('The account is assigned to the Ad Specialist', accountAssigned.status === 200 && accountAssigned.body.status === 'ACCOUNT_ASSIGNED');
+
+  const specialistQueue = await adsSession.json<{ rows: Array<{ id: string }> }>(
+    '/api/ad-requests?status=AWAITING_AD_SUBMISSION,RECHECK_REQUESTED,ACCOUNT_ASSIGNED,LIVE'
+  );
+  check(
+    'It reaches the Ad Specialist queue',
+    specialistQueue.status === 200 && specialistQueue.body.rows.some((r) => r.id === requestId)
+  );
 
   const copy = await adsSession.json<{
     headlines: Array<{ text: string; characters: number }>;
@@ -433,17 +469,31 @@ async function main() {
     `${score.body?.score}/100 grade ${score.body?.grade}, ${score.body?.suggestions?.length} suggestion(s)`
   );
 
-  const live = await adsSession.json<{ status: string }>(`/api/ad-requests/${requestId}/transition`, {
-    method: 'POST',
-    body: JSON.stringify({ target: 'READY' }),
-  });
-  check('Ads team marks it ready', live.status === 200 && live.body.status === 'READY');
+  const noCampaign = await adsSession.json<{ error: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'LIVE' }) }
+  );
+  check('Going live without a campaign ID is refused', noCampaign.status === 400, noCampaign.body?.error);
 
   const golive = await adsSession.json<{ status: string }>(`/api/ad-requests/${requestId}/transition`, {
     method: 'POST',
     body: JSON.stringify({ target: 'LIVE', linkedCampaignId: '21345678901' }),
   });
-  check('Ads team takes it live', golive.status === 200 && golive.body.status === 'LIVE');
+  check(
+    'The Ad Specialist takes it live',
+    golive.status === 200 && golive.body.status === 'LIVE',
+    `got ${golive.status} ${golive.body?.status ?? JSON.stringify(golive.body).slice(0, 90)}`
+  );
+
+  const completed = await adsSession.json<{ status: string }>(`/api/ad-requests/${requestId}/transition`, {
+    method: 'POST',
+    body: JSON.stringify({ target: 'COMPLETED' }),
+  });
+  check(
+    'The setup is completed',
+    completed.status === 200 && completed.body.status === 'COMPLETED',
+    `got ${completed.status} ${completed.body?.status ?? ''}`
+  );
 
   const detail = await adsSession.json<{
     request: { linkedCampaignId: string; events: unknown[]; adCopyVersions: unknown[]; landingScores: unknown[] };
@@ -454,7 +504,7 @@ async function main() {
   );
   check(
     'The timeline recorded every step',
-    detail.body.request.events.length >= 8,
+    detail.body.request.events.length >= 18,
     `${detail.body.request.events.length} events`
   );
   check('The copy version is attached', detail.body.request.adCopyVersions.length === 1);

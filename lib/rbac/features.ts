@@ -18,6 +18,7 @@ export const ACTIONS = [
   'EDIT',
   'DELETE',
   'APPROVE',
+  'ASSIGN',
   'EXPORT',
   'GENERATE_AI',
   'MANAGE',
@@ -77,7 +78,7 @@ export const MODULES: ModuleDef[] = [
     key: 'AD_REQUESTS',
     label: 'Ad Requests',
     description: 'The request workflow: raise, edit, review and progress ad requests.',
-    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'APPROVE', 'EXPORT'],
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'APPROVE', 'ASSIGN', 'EXPORT'],
   },
   {
     key: 'AD_COPY',
@@ -129,6 +130,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   EDIT: 'Edit',
   DELETE: 'Delete',
   APPROVE: 'Approve',
+  ASSIGN: 'Assign people',
   EXPORT: 'Export',
   GENERATE_AI: 'Generate AI',
   MANAGE: 'Manage',
@@ -207,6 +209,23 @@ export const SEED_ROLES: SeedRole[] = [
       feature('AD_REQUESTS', 'VIEW'),
       feature('AD_REQUESTS', 'CREATE'),
       feature('AD_REQUESTS', 'EDIT'),
+      // Ops reviews the ads and applies the budget — steps 7, 9 and 10 — and
+      // names the Account Manager and Ad Specialist at steps 3 and 11.
+      feature('AD_REQUESTS', 'APPROVE'),
+      feature('AD_REQUESTS', 'ASSIGN'),
+      feature('AD_COPY', 'VIEW'),
+      feature('LANDING_SCORE', 'VIEW'),
+    ],
+  },
+  {
+    slug: 'account-manager',
+    name: 'Account Manager',
+    description:
+      'Owns the account from step 3. Sees the requirement and its progress, and the ' +
+      'reporting for the accounts they are scoped to.',
+    features: [
+      ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS', 'FINANCIALS'),
+      feature('AD_REQUESTS', 'VIEW'),
       feature('AD_COPY', 'VIEW'),
       feature('LANDING_SCORE', 'VIEW'),
     ],
@@ -215,7 +234,8 @@ export const SEED_ROLES: SeedRole[] = [
     slug: 'google-ads-team',
     name: 'Google Ads Team',
     description:
-      'Works approved requests: generates ad copy, scores landing pages, and takes a request to live.',
+      'The Ad Specialist on the approval flow. Builds keywords and ad copy, fixes ' +
+      'rechecks, and takes a request live.',
     features: [
       ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS', 'FINANCIALS'),
       feature('CAMPAIGNS', 'EXPORT'),

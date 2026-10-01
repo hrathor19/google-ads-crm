@@ -1,0 +1,357 @@
+import { describe, expect, it } from 'vitest';
+import type { AdRequestStatus } from '@prisma/client';
+import {
+  SPECIALIST_QUEUE,
+  STATUS_LABELS,
+  STATUS_STEP,
+  SYSTEM_STEPS,
+  TRANSITIONS,
+  evaluate,
+  findTransition,
+  isTerminal,
+  nextStates,
+  TRANSIENT_STATES,
+} from '@/lib/workflow/state-machine';
+
+/**
+ * The Ad Setup & Approval flow, exercised directly.
+ *
+ * Every legal move, and — the part that matters — every illegal one. A
+ * transition table only tested through the happy path lets a missing guard
+ * through, and a missing guard here means someone approving their own budget.
+ */
+
+const ALL_STATUSES: AdRequestStatus[] = [
+  'DRAFT',
+  'SUBMITTED',
+  'AWAITING_AM_ASSIGNMENT',
+  'AM_ASSIGNED',
+  'AWAITING_AD_SUBMISSION',
+  'ADS_SUBMITTED',
+  'UNDER_REVIEW',
+  'RECHECK_REQUESTED',
+  'REVIEW_APPROVED',
+  'BUDGET_APPROVED',
+  'ACCOUNT_ASSIGNED',
+  'LIVE',
+  'COMPLETED',
+  'REJECTED',
+];
+
+/** An actor who holds everything, so a refusal is never about permissions. */
+const god = {
+  isOwner: true,
+  isSuperAdmin: false,
+  hasPermission: () => true,
+};
+
+/** Everything a requirement could ask for, satisfied. */
+const complete = {
+  reason: 'Because.',
+  accountManagerId: 'cku000000000000000000000',
+  adSpecialistId: 'cku111111111111111111111',
+  budget: 250_000,
+  requiredCpl: 2_500,
+  linkedCampaignId: '21345678901',
+};
+
+const move = (from: AdRequestStatus, to: AdRequestStatus, over: Partial<typeof god> = {}) =>
+  evaluate({ from, to, ...god, ...over, provided: complete });
+
+describe('the table itself', () => {
+  it('labels every status, including the retired ones', () => {
+    for (const s of ALL_STATUSES) expect(STATUS_LABELS[s]).toBeTruthy();
+    expect(STATUS_LABELS.APPROVED).toMatch(/retired/i);
+  });
+
+  it('guards every human transition with a permission', () => {
+    for (const t of TRANSITIONS) {
+      expect(t.permission, `${t.to} has no permission`).toMatch(/^[A-Z_]+:[A-Z_]+$/);
+    }
+  });
+
+  it('never transitions back into DRAFT — it is the creation state', () => {
+    expect(TRANSITIONS.some((t) => t.to === 'DRAFT')).toBe(false);
+  });
+
+  it('treats COMPLETED as the only dead end', () => {
+    // REJECTED is not one: a rejected requirement can be fixed and
+    // resubmitted, which is the whole point of recording a reason.
+    expect(ALL_STATUSES.filter(isTerminal)).toEqual(['COMPLETED']);
+  });
+
+  it('counts the three System boxes as transient, not finished', () => {
+    // Nothing declares a move out of these; the system advances past them
+    // once the mail is away. Calling them terminal would make a stalled
+    // request look complete.
+    expect(TRANSIENT_STATES.sort()).toEqual(['ADS_SUBMITTED', 'AM_ASSIGNED', 'SUBMITTED']);
+    for (const s of TRANSIENT_STATES) expect(isTerminal(s)).toBe(false);
+  });
+
+  it('leaves no state stranded — every one is reachable from DRAFT', () => {
+    const seen = new Set<AdRequestStatus>(['DRAFT']);
+    const queue: AdRequestStatus[] = ['DRAFT'];
+    while (queue.length) {
+      const here = queue.shift()!;
+      for (const next of nextStates(here)) {
+        // The auto-advance targets are reached by the system, not by a rule.
+        const rule = findTransition(here, next);
+        const targets = [next, rule?.autoAdvanceTo].filter(Boolean) as AdRequestStatus[];
+        for (const t of targets) {
+          if (!seen.has(t)) {
+            seen.add(t);
+            queue.push(t);
+          }
+        }
+      }
+    }
+    const unreachable = ALL_STATUSES.filter((s) => !seen.has(s));
+    expect(unreachable).toEqual([]);
+  });
+
+  it('numbers each step the way the flow diagram does', () => {
+    expect(STATUS_STEP.SUBMITTED).toBe(1);
+    expect(STATUS_STEP.UNDER_REVIEW).toBe(6);
+    expect(STATUS_STEP.BUDGET_APPROVED).toBe(10);
+    expect(STATUS_STEP.COMPLETED).toBe(13);
+  });
+});
+
+describe('the thirteen steps, in order', () => {
+  const happyPath: Array<[AdRequestStatus, AdRequestStatus]> = [
+    ['DRAFT', 'SUBMITTED'],
+    ['AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED'],
+    ['AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED'],
+    ['UNDER_REVIEW', 'REVIEW_APPROVED'],
+    ['REVIEW_APPROVED', 'BUDGET_APPROVED'],
+    ['BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'],
+    ['ACCOUNT_ASSIGNED', 'LIVE'],
+    ['LIVE', 'COMPLETED'],
+  ];
+
+  it.each(happyPath)('allows %s → %s', (from, to) => {
+    expect(move(from, to).ok).toBe(true);
+  });
+
+  it('advances the three system steps on its own', () => {
+    expect(findTransition('DRAFT', 'SUBMITTED')?.autoAdvanceTo).toBe('AWAITING_AM_ASSIGNMENT');
+    expect(findTransition('AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED')?.autoAdvanceTo).toBe(
+      'AWAITING_AD_SUBMISSION'
+    );
+    expect(findTransition('AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED')?.autoAdvanceTo).toBe(
+      'UNDER_REVIEW'
+    );
+    for (const s of ['AWAITING_AM_ASSIGNMENT', 'AWAITING_AD_SUBMISSION', 'UNDER_REVIEW']) {
+      expect(SYSTEM_STEPS[s]?.label).toBeTruthy();
+    }
+  });
+
+  it('names the right actor for each step', () => {
+    expect(findTransition('DRAFT', 'SUBMITTED')?.actor).toBe('OPS');
+    expect(findTransition('AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED')?.actor).toBe('OPS');
+    expect(findTransition('AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED')?.actor).toBe('AD_SPECIALIST');
+    expect(findTransition('UNDER_REVIEW', 'REVIEW_APPROVED')?.actor).toBe('OPS');
+    expect(findTransition('ACCOUNT_ASSIGNED', 'LIVE')?.actor).toBe('AD_SPECIALIST');
+  });
+});
+
+describe('the recheck loop', () => {
+  it('goes back for a recheck and returns', () => {
+    expect(move('UNDER_REVIEW', 'RECHECK_REQUESTED').ok).toBe(true);
+    expect(move('RECHECK_REQUESTED', 'ADS_SUBMITTED').ok).toBe(true);
+  });
+
+  it('can run any number of times — the loop has no counter', () => {
+    // Three rounds, the integration case from the brief.
+    for (let round = 0; round < 3; round += 1) {
+      expect(move('UNDER_REVIEW', 'RECHECK_REQUESTED').ok).toBe(true);
+      expect(move('RECHECK_REQUESTED', 'ADS_SUBMITTED').ok).toBe(true);
+    }
+  });
+
+  it('refuses a recheck with no remarks', () => {
+    const r = evaluate({
+      from: 'UNDER_REVIEW',
+      to: 'RECHECK_REQUESTED',
+      ...god,
+      provided: { ...complete, reason: '   ' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('MISSING');
+      expect(r.message).toMatch(/what needs changing/i);
+    }
+  });
+});
+
+describe('requirements', () => {
+  it('will not assign an Account Manager without naming one', () => {
+    const r = evaluate({
+      from: 'AWAITING_AM_ASSIGNMENT',
+      to: 'AM_ASSIGNED',
+      ...god,
+      provided: { ...complete, accountManagerId: null },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/Account Manager/i);
+  });
+
+  it('will not hand over the account without an Ad Specialist', () => {
+    const r = evaluate({
+      from: 'BUDGET_APPROVED',
+      to: 'ACCOUNT_ASSIGNED',
+      ...god,
+      provided: { ...complete, adSpecialistId: null },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/Ad Specialist/i);
+  });
+
+  it.each([
+    [null, 2500, /budget above zero/i],
+    [0, 2500, /budget above zero/i],
+    [250000, null, /CPL/i],
+    [250000, 0, /CPL/i],
+  ])('refuses budget approval with budget=%s cpl=%s', (budget, requiredCpl, expected) => {
+    const r = evaluate({
+      from: 'REVIEW_APPROVED',
+      to: 'BUDGET_APPROVED',
+      ...god,
+      provided: { ...complete, budget, requiredCpl },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(expected);
+  });
+
+  it('will not go live without a campaign ID', () => {
+    const r = evaluate({
+      from: 'ACCOUNT_ASSIGNED',
+      to: 'LIVE',
+      ...god,
+      provided: { ...complete, linkedCampaignId: '' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/campaign ID/i);
+  });
+
+  it('refuses a rejection with no reason', () => {
+    const r = evaluate({
+      from: 'SUBMITTED',
+      to: 'REJECTED',
+      ...god,
+      provided: { ...complete, reason: '' },
+    });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('illegal moves', () => {
+  it('refuses every pair the table does not declare', () => {
+    const legal = new Set(TRANSITIONS.flatMap((t) => t.from.map((f) => `${f}->${t.to}`)));
+    const refused: string[] = [];
+    for (const from of ALL_STATUSES) {
+      for (const to of ALL_STATUSES) {
+        if (legal.has(`${from}->${to}`)) continue;
+        const r = move(from, to);
+        if (r.ok) refused.push(`${from}->${to} was allowed but is not in the table`);
+        else if (r.code !== 'ILLEGAL') refused.push(`${from}->${to} refused as ${r.code}`);
+      }
+    }
+    expect(refused).toEqual([]);
+  });
+
+  it.each([
+    ['DRAFT', 'LIVE'],
+    ['DRAFT', 'COMPLETED'],
+    ['SUBMITTED', 'BUDGET_APPROVED'],
+    ['UNDER_REVIEW', 'LIVE'],
+    ['REVIEW_APPROVED', 'ACCOUNT_ASSIGNED'],
+    ['COMPLETED', 'LIVE'],
+    ['REJECTED', 'COMPLETED'],
+    ['LIVE', 'UNDER_REVIEW'],
+  ] as Array<[AdRequestStatus, AdRequestStatus]>)('refuses %s → %s', (from, to) => {
+    const r = move(from, to);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('ILLEGAL');
+  });
+
+  it('refuses skipping the budget step', () => {
+    expect(move('REVIEW_APPROVED', 'ACCOUNT_ASSIGNED').ok).toBe(false);
+    expect(move('REVIEW_APPROVED', 'LIVE').ok).toBe(false);
+  });
+
+  it('cannot move out of a terminal state', () => {
+    for (const to of ALL_STATUSES) {
+      expect(move('COMPLETED', to).ok).toBe(false);
+      expect(move('REJECTED', to).ok, `REJECTED → ${to}`).toBe(
+        // Re-submitting a rejected request is the one way back.
+        to === 'SUBMITTED'
+      );
+    }
+  });
+});
+
+describe('authorisation', () => {
+  it('refuses a transition the actor lacks the permission for', () => {
+    const r = evaluate({
+      from: 'UNDER_REVIEW',
+      to: 'REVIEW_APPROVED',
+      isOwner: false,
+      isSuperAdmin: false,
+      hasPermission: () => false,
+      provided: complete,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('FORBIDDEN');
+      expect(r.message).toMatch(/AD_REQUESTS:APPROVE/);
+    }
+  });
+
+  it('refuses someone else submitting a request they did not raise', () => {
+    const r = evaluate({
+      from: 'DRAFT',
+      to: 'SUBMITTED',
+      isOwner: false,
+      isSuperAdmin: false,
+      hasPermission: () => true,
+      provided: complete,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('FORBIDDEN');
+  });
+
+  it('lets a Super Admin past the owner check but still records the rule', () => {
+    const r = evaluate({
+      from: 'DRAFT',
+      to: 'SUBMITTED',
+      isOwner: false,
+      isSuperAdmin: true,
+      hasPermission: () => false,
+      provided: complete,
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('checks permissions before requirements, so the message is the useful one', () => {
+    // Someone with no rights should be told that, not told to type a reason.
+    const r = evaluate({
+      from: 'UNDER_REVIEW',
+      to: 'RECHECK_REQUESTED',
+      isOwner: false,
+      isSuperAdmin: false,
+      hasPermission: () => false,
+      provided: { ...complete, reason: '' },
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('FORBIDDEN');
+  });
+});
+
+describe('the specialist queue', () => {
+  it('holds exactly the states waiting on the Ad Specialist', () => {
+    expect(SPECIALIST_QUEUE.sort()).toEqual(
+      ['ACCOUNT_ASSIGNED', 'AWAITING_AD_SUBMISSION', 'LIVE', 'RECHECK_REQUESTED'].sort()
+    );
+  });
+});
