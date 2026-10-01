@@ -126,6 +126,7 @@ export default function DashboardPage() {
               label="Accounts"
               value={formatNumber(data.counts.accounts)}
               icon={Users}
+              caption={`${formatNumber(data.counts.campaignsActive)} active campaigns`}
               hint="Client accounts under the MCC, excluding the manager account itself."
             />
             <StatTile

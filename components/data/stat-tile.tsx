@@ -24,6 +24,7 @@ export function StatTile({
   direction = 'up-good',
   hint,
   previous,
+  caption,
   icon: Accent,
 }: {
   label: string;
@@ -32,6 +33,12 @@ export function StatTile({
   direction?: 'up-good' | 'down-good';
   hint?: string;
   previous?: string;
+  /**
+   * Secondary line for a tile that has no delta to show. Not every metric has
+   * a prior period worth comparing — an account count does not — and leaving
+   * the slot empty made that tile shorter than the rest of the row.
+   */
+  caption?: string;
   /** Optional glyph for the tile's corner, to make a KPI row scannable. */
   icon?: LucideIcon;
 }) {
@@ -44,7 +51,7 @@ export function StatTile({
   const unavailable = delta === null || delta === undefined;
 
   const body = (
-    <Card className="overflow-hidden">
+    <Card className="h-full overflow-hidden">
       <CardContent className="relative p-4">
         {/* A hairline of the metric's own colour along the top edge — enough
             to tell a rising figure from a falling one at a glance, without
@@ -71,6 +78,10 @@ export function StatTile({
         </div>
 
         <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+
+        {delta === undefined && caption && (
+          <p className="mt-2 truncate text-xs text-muted-foreground">{caption}</p>
+        )}
 
         {delta !== undefined &&
           (unavailable ? (
@@ -102,7 +113,11 @@ export function StatTile({
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div>{body}</div>
+        {/* h-full on both: this wrapper becomes the grid item in place of the
+            card, and without it the card keeps its natural height inside a
+            stretched wrapper — which is why the one tile carrying a hint sat
+            shorter than the rest of the row. */}
+        <div className="h-full">{body}</div>
       </TooltipTrigger>
       <TooltipContent>{hint}</TooltipContent>
     </Tooltip>
