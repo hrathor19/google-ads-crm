@@ -241,6 +241,15 @@ Two consequences worth knowing:
   Intelligence dashboards too, not just this app's.
 - `npm run parity` is unaffected, because both engines read the same tables.
 
+Accounts the API refuses outright — "The customer account can't be accessed",
+for accounts closed or unlinked from the MCC — are skipped. There are 29 such
+accounts here, and syncing them would log ~174 failures a day once the cron is
+installed, burying anything real on the Integrations Health page. Status does
+not predict which: 6 CANCELED accounts are reachable and 1 SUSPENDED is not.
+The test is whether the account has ever produced a snapshot, which needs no
+extra bookkeeping. Scope ends up at 92 accounts: 73 ENABLED plus 19 reachable
+others.
+
 Set it to `false` to match the source app exactly. The `is_syncable` column
 itself is never written by this app: the source project maintains it and would
 overwrite any change, so the decision is made in the query instead.

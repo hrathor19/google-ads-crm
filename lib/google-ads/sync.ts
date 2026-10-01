@@ -193,9 +193,24 @@ async function replaceWindow(
  * an MCC outright ("Metrics cannot be requested for a manager account").
  */
 function accountScopeFilter() {
-  return env.sync().includeSuspended
-    ? { is_manager: false }
-    : { is_manager: false, is_syncable: true };
+  if (!env.sync().includeSuspended) return { is_manager: false, is_syncable: true };
+
+  // Widening to every non-manager account sweeps in ones the API refuses
+  // outright — "The customer account can't be accessed", for accounts closed
+  // or unlinked from the MCC. In this MCC that is 29 of the 48, and each one
+  // is a failed sync_log per entity per run: ~174 failures a day once the
+  // cron is installed, which would bury any real problem on the Integrations
+  // Health page.
+  //
+  // Account status does not predict it — 6 CANCELED accounts are reachable
+  // and 1 SUSPENDED is not — so the test is whether the account has ever
+  // yielded a snapshot. That needs no extra table to track, and it
+  // self-corrects: an account whose access is restored starts producing rows
+  // again the first time it is synced explicitly with --customers.
+  return {
+    is_manager: false,
+    OR: [{ is_syncable: true }, { campaign_snapshots: { some: {} } }],
+  };
 }
 
 /**
