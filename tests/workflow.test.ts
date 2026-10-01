@@ -105,18 +105,20 @@ describe('request validation', () => {
     location: 'Bangalore',
     budget: 100000,
     startDate: '2026-10-01',
-    landingPageUrl: 'https://example.com/mba',
+    adUrlClientlpDesktop: 'https://example.com/mba',
   };
 
   it('accepts a complete brief', () => {
     expect(adRequestInputSchema.safeParse(valid).success).toBe(true);
   });
 
-  it('refuses a non-http scheme on the landing page', () => {
+  it('refuses a non-http scheme on an ads URL', () => {
     // The URL is fetched server-side by the scorer, so anything else would
     // hand that fetcher an arbitrary target.
     for (const url of ['file:///etc/passwd', 'javascript:alert(1)', 'ftp://example.com']) {
-      expect(adRequestInputSchema.safeParse({ ...valid, landingPageUrl: url }).success).toBe(false);
+      expect(
+        adRequestInputSchema.safeParse({ ...valid, adUrlClientlpDesktop: url }).success
+      ).toBe(false);
     }
   });
 

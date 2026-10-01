@@ -62,6 +62,10 @@ export async function GET(req: Request) {
           status: true,
           objective: true,
           budget: true,
+          requiredCpl: true,
+          requiredLeads: true,
+          clientType: true,
+          trackingId: true,
           startDate: true,
           endDate: true,
           landingPageUrl: true,
@@ -86,7 +90,9 @@ export async function GET(req: Request) {
       statusCounts: Object.fromEntries(counts.map((c) => [c.status, c._count])),
       rows: rows.map((r) => ({
         ...r,
-        budget: canSeeMoney ? Number(r.budget) : null,
+        budget: canSeeMoney && r.budget != null ? Number(r.budget) : null,
+        requiredCpl:
+          canSeeMoney && r.requiredCpl != null ? Number(r.requiredCpl) : null,
         accountName: r.account?.descriptive_name ?? null,
         account: undefined,
       })),
@@ -102,19 +108,43 @@ export async function POST(req: Request) {
     return createRequest(
       principal,
       {
+        trackingId: body.trackingId ?? null,
         title: body.title,
+        clientType: body.clientType ?? null,
         accountId: body.accountId ?? null,
         objective: body.objective,
         productService: body.productService,
-        targetAudience: body.targetAudience,
-        location: body.location,
-        budget: body.budget,
+
+        budget: body.budget ?? null,
+        requiredCpl: body.requiredCpl ?? null,
+        requiredLeads: body.requiredLeads ?? null,
+        performanceParameter: body.performanceParameter ?? null,
+        targetApplication: body.targetApplication ?? null,
+        targetAdmission: body.targetAdmission ?? null,
+
         startDate: new Date(`${body.startDate}T00:00:00.000Z`),
         endDate: body.endDate ? new Date(`${body.endDate}T00:00:00.000Z`) : null,
-        landingPageUrl: body.landingPageUrl,
+        applicationDeadline: body.applicationDeadline ?? null,
+        focusedMonths: body.focusedMonths ?? null,
+
+        targetAudience: body.targetAudience,
+        ageRestriction: body.ageRestriction ?? 'OPEN',
+        location: body.location,
+        blockedLocations: body.blockedLocations ?? null,
+        accountVisibility: body.accountVisibility ?? null,
+        reportingPanel: body.reportingPanel ?? null,
+
+        adUrlKapplpDesktop: body.adUrlKapplpDesktop ?? null,
+        adUrlKapplpMobile: body.adUrlKapplpMobile ?? null,
+        adUrlKapplpBing: body.adUrlKapplpBing ?? null,
+        adUrlClientlpDesktop: body.adUrlClientlpDesktop ?? null,
+        adUrlClientlpMobile: body.adUrlClientlpMobile ?? null,
+        adUrlClientlpBing: body.adUrlClientlpBing ?? null,
+
         usps: body.usps ?? null,
         keywords: body.keywords ?? null,
         notes: body.notes ?? null,
+        leadTargets: body.leadTargets,
       },
       { submit: body.submit, ip: clientIp(req) }
     );

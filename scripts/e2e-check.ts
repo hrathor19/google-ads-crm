@@ -316,7 +316,7 @@ async function main() {
         location: 'Bangalore',
         budget: 250000,
         startDate: new Date().toISOString().slice(0, 10),
-        landingPageUrl: 'https://www.kollegeapply.com/',
+        adUrlClientlpDesktop: 'https://www.kollegeapply.com/',
         usps: 'NAAC A++, scholarships, placement support',
         keywords: 'mba admission\nbest mba college',
       }),

@@ -761,6 +761,20 @@ enum AdRequestStatus {
   COMPLETED
 }
 
+/// The brief's "Client/Generic/NonClient/Exam" column.
+enum AdRequestClientType {
+  CLIENT
+  GENERIC
+  NON_CLIENT
+  EXAM
+}
+
+/// Whether the campaign targets everyone or is age-gated.
+enum AdRequestAgeRestriction {
+  OPEN
+  AGE_18_24
+}
+
 enum CampaignObjective {
   LEAD_GENERATION
   WEBSITE_TRAFFIC
@@ -940,7 +954,9 @@ model CrmAdRequest {
   productService String    @map("product_service")
   targetAudience String    @map("target_audience")
   location       String
-  budget         Decimal   @db.Decimal(14, 2)
+  /// Nullable: the sheet leaves "Assigned Budget" blank at submission and Ops
+  /// applies it at the budget stage of the flow.
+  budget         Decimal?  @db.Decimal(14, 2)
   startDate      DateTime  @map("start_date") @db.Date
   endDate        DateTime? @map("end_date") @db.Date
   landingPageUrl String    @map("landing_page_url")
@@ -948,6 +964,43 @@ model CrmAdRequest {
   /// Free-text, one keyword per line — optional per the brief.
   keywords       String?
   notes          String?
+
+  // ── Campaign activation requirement ───────────────────────────────────────
+  // The fields Ops fills from the "Ads Campaign Activation Requirement Format"
+  // sheet. All nullable: existing rows predate them, and several are filled at
+  // later stages of the flow rather than at submission.
+
+  /// "New Tracking ID" — the client's own reference, e.g. 13000047.
+  trackingId     String?                  @map("tracking_id")
+  clientType     AdRequestClientType?     @map("client_type")
+  ageRestriction AdRequestAgeRestriction? @default(OPEN) @map("age_restriction")
+
+  /// Free text: the sheet carries "-" as often as a number.
+  targetAdmission      String? @map("target_admission")
+  /// Free text: "End of February" is a valid answer in the sheet.
+  applicationDeadline  String? @map("application_deadline")
+  focusedMonths        String? @map("focused_months")
+  performanceParameter String? @map("performance_parameter")
+  reportingPanel       String? @map("reporting_panel")
+  /// "Open / Hidden / OtherAccount / Domain".
+  accountVisibility    String? @map("account_visibility")
+  /// Pincodes or areas to exclude, as typed.
+  blockedLocations     String? @map("blocked_locations")
+
+  /// Numeric because the flow does arithmetic on them: CPL approval, lead
+  /// pacing against the monthly targets below.
+  requiredLeads     Int?     @map("required_leads")
+  targetApplication Int?     @map("target_application")
+  requiredCpl       Decimal? @map("required_cpl") @db.Decimal(14, 2)
+
+  /// Six destination URLs, by platform. The scored landing page is derived
+  /// from the first one present — see `primaryLandingUrl` in the schema module.
+  adUrlKapplpDesktop   String? @map("ad_url_kapplp_desktop")
+  adUrlKapplpMobile    String? @map("ad_url_kapplp_mobile")
+  adUrlKapplpBing      String? @map("ad_url_kapplp_bing")
+  adUrlClientlpDesktop String? @map("ad_url_clientlp_desktop")
+  adUrlClientlpMobile  String? @map("ad_url_clientlp_mobile")
+  adUrlClientlpBing    String? @map("ad_url_clientlp_bing")
 
   /// Filled by the Ads team once the campaign exists in Google Ads.
   linkedCampaignId String? @map("linked_campaign_id")
@@ -969,6 +1022,7 @@ model CrmAdRequest {
   account    accounts? @relation(fields: [accountId], references: [id])
 
   events         CrmAdRequestEvent[]
+  leadTargets    CrmAdRequestLeadTarget[]
   attachments    CrmAdRequestAttachment[]
   adCopyVersions CrmAdCopyVersion[]
   landingScores  CrmLandingScore[]
@@ -984,6 +1038,24 @@ model CrmAdRequest {
 
 /// The timeline / activity feed under a request. Comments and transitions share
 /// one table so the feed is a single ordered read.
+/// The sheet's month-by-month lead plan (Sep26 = 5, Oct26 = 12, …).
+///
+/// A child table rather than JSON so the months can be aggregated, compared
+/// against delivered leads, and edited one row at a time.
+model CrmAdRequestLeadTarget {
+  id        String   @id @default(cuid())
+  requestId String   @map("request_id")
+  /// First day of the month, so ordering and date maths work.
+  month     DateTime @db.Date
+  leads     Int
+
+  request CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, month])
+  @@index([requestId])
+  @@map("crm_ad_request_lead_targets")
+}
+
 model CrmAdRequestEvent {
   id         String             @id @default(cuid())
   requestId  String             @map("request_id")

@@ -10,7 +10,8 @@ import {
 } from '@/lib/api';
 import { logAudit } from '@/lib/audit';
 import { assertVisible, availableTransitions } from '@/lib/workflow/ad-requests';
-import { adRequestInputSchema } from '@/lib/workflow/schemas';
+import { Prisma } from '@prisma/client';
+import { adRequestPatchSchema, primaryLandingUrl } from '@/lib/workflow/schemas';
 import { canSeeFinancials } from '@/lib/redact';
 
 export const dynamic = 'force-dynamic';
@@ -31,6 +32,29 @@ const detailSelect = {
   usps: true,
   keywords: true,
   notes: true,
+
+  // The campaign activation requirement fields.
+  trackingId: true,
+  clientType: true,
+  ageRestriction: true,
+  requiredLeads: true,
+  requiredCpl: true,
+  performanceParameter: true,
+  targetApplication: true,
+  targetAdmission: true,
+  applicationDeadline: true,
+  focusedMonths: true,
+  blockedLocations: true,
+  accountVisibility: true,
+  reportingPanel: true,
+  adUrlKapplpDesktop: true,
+  adUrlKapplpMobile: true,
+  adUrlKapplpBing: true,
+  adUrlClientlpDesktop: true,
+  adUrlClientlpMobile: true,
+  adUrlClientlpBing: true,
+  leadTargets: { orderBy: { month: 'asc' }, select: { month: true, leads: true } },
+
   linkedCampaignId: true,
   decisionReason: true,
   submittedAt: true,
@@ -115,7 +139,9 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     return {
       request: {
         ...request,
-        budget: canSeeMoney ? Number(request.budget) : null,
+        budget: canSeeMoney && request.budget != null ? Number(request.budget) : null,
+        requiredCpl:
+          canSeeMoney && request.requiredCpl != null ? Number(request.requiredCpl) : null,
         accountName: request.account?.descriptive_name ?? null,
       },
       transitions,
@@ -136,7 +162,7 @@ const EDITABLE = ['DRAFT', 'CHANGES_REQUESTED', 'REJECTED'] as const;
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   return handle(async () => {
     const principal = await requirePermission('AD_REQUESTS', 'EDIT');
-    const body = await parseBody(req, adRequestInputSchema.partial());
+    const body = await parseBody(req, adRequestPatchSchema);
 
     const existing = await prisma.crmAdRequest.findUnique({
       where: { id: params.id },
@@ -162,27 +188,37 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       );
     }
 
+    // Every scalar the brief carries, patched only when the caller sent it.
+    // Listed explicitly rather than spread wholesale so a stray key in the
+    // body can never reach the database.
+    const patch: Prisma.CrmAdRequestUncheckedUpdateInput = {};
+    const setIf = <K extends keyof typeof body>(key: K, to?: keyof Prisma.CrmAdRequestUncheckedUpdateInput) => {
+      if (body[key] !== undefined) {
+        (patch as Record<string, unknown>)[(to as string) ?? (key as string)] = body[key];
+      }
+    };
+    for (const k of [
+      'trackingId', 'title', 'clientType', 'accountId', 'objective', 'productService',
+      'budget', 'requiredCpl', 'requiredLeads', 'performanceParameter', 'targetApplication',
+      'targetAdmission', 'applicationDeadline', 'focusedMonths', 'targetAudience',
+      'ageRestriction', 'location', 'blockedLocations', 'accountVisibility', 'reportingPanel',
+      'adUrlKapplpDesktop', 'adUrlKapplpMobile', 'adUrlKapplpBing',
+      'adUrlClientlpDesktop', 'adUrlClientlpMobile', 'adUrlClientlpBing',
+      'keywords', 'usps', 'notes',
+    ] as const) {
+      setIf(k);
+    }
+    if (body.startDate !== undefined) patch.startDate = new Date(`${body.startDate}T00:00:00.000Z`);
+    if (body.endDate !== undefined) {
+      patch.endDate = body.endDate ? new Date(`${body.endDate}T00:00:00.000Z`) : null;
+    }
+    // The scored page follows whichever ads URL survives the edit.
+    const derived = primaryLandingUrl({ ...existing, ...body });
+    if (derived) patch.landingPageUrl = derived;
+
     const updated = await prisma.crmAdRequest.update({
       where: { id: params.id },
-      data: {
-        ...(body.title !== undefined && { title: body.title }),
-        ...(body.accountId !== undefined && { accountId: body.accountId }),
-        ...(body.objective !== undefined && { objective: body.objective }),
-        ...(body.productService !== undefined && { productService: body.productService }),
-        ...(body.targetAudience !== undefined && { targetAudience: body.targetAudience }),
-        ...(body.location !== undefined && { location: body.location }),
-        ...(body.budget !== undefined && { budget: body.budget }),
-        ...(body.startDate !== undefined && {
-          startDate: new Date(`${body.startDate}T00:00:00.000Z`),
-        }),
-        ...(body.endDate !== undefined && {
-          endDate: body.endDate ? new Date(`${body.endDate}T00:00:00.000Z`) : null,
-        }),
-        ...(body.landingPageUrl !== undefined && { landingPageUrl: body.landingPageUrl }),
-        ...(body.usps !== undefined && { usps: body.usps }),
-        ...(body.keywords !== undefined && { keywords: body.keywords }),
-        ...(body.notes !== undefined && { notes: body.notes }),
-      },
+      data: patch,
     });
 
     await logAudit({

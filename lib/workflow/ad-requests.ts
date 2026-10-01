@@ -1,11 +1,17 @@
 import 'server-only';
-import { AdRequestStatus, type Prisma } from '@prisma/client';
+import {
+  AdRequestStatus,
+  type AdRequestAgeRestriction,
+  type AdRequestClientType,
+  type Prisma,
+} from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { logAudit } from '@/lib/audit';
 import { notify, usersWithPermission } from '@/lib/notifications';
 import { ApiError, badRequest, conflict, forbidden, notFound } from '@/lib/api';
 import type { Principal } from '@/lib/rbac/permissions';
 import { hasPermission } from '@/lib/rbac/permissions';
+import { primaryLandingUrl } from './schemas';
 
 /**
  * The Ad Request lifecycle.
@@ -129,20 +135,54 @@ async function nextReference(tx: Prisma.TransactionClient): Promise<string> {
   return `AR-${String(n).padStart(4, '0')}`;
 }
 
+/**
+ * The brief as Ops fills it, mirroring the "Ads Campaign Activation
+ * Requirement Format" sheet.
+ *
+ * `landingPageUrl` is not here: it is derived from whichever ads URL is
+ * present, so the scorer and the ad-copy generator always have a page to work
+ * from without asking for the same URL twice.
+ */
 export type CreateRequestInput = {
+  trackingId: string | null;
   title: string;
+  clientType: AdRequestClientType | null;
   accountId: number | null;
   objective: Prisma.CrmAdRequestCreateInput['objective'];
   productService: string;
-  targetAudience: string;
-  location: string;
-  budget: number;
+
+  budget: number | null;
+  requiredCpl: number | null;
+  requiredLeads: number | null;
+  performanceParameter: string | null;
+  targetApplication: number | null;
+  targetAdmission: string | null;
+
   startDate: Date;
   endDate: Date | null;
-  landingPageUrl: string;
+  applicationDeadline: string | null;
+  focusedMonths: string | null;
+
+  targetAudience: string;
+  ageRestriction: AdRequestAgeRestriction | null;
+  location: string;
+  blockedLocations: string | null;
+  accountVisibility: string | null;
+  reportingPanel: string | null;
+
+  adUrlKapplpDesktop: string | null;
+  adUrlKapplpMobile: string | null;
+  adUrlKapplpBing: string | null;
+  adUrlClientlpDesktop: string | null;
+  adUrlClientlpMobile: string | null;
+  adUrlClientlpBing: string | null;
+
   usps: string | null;
   keywords: string | null;
   notes: string | null;
+
+  /** Month-by-month lead plan: `{ month: 'YYYY-MM', leads }`. */
+  leadTargets?: Array<{ month: string; leads: number }>;
 };
 
 export async function createRequest(
@@ -165,10 +205,41 @@ export async function createRequest(
         budget: input.budget,
         startDate: input.startDate,
         endDate: input.endDate,
-        landingPageUrl: input.landingPageUrl,
+        // NOT NULL in the schema, and the refinement on the input guarantees
+        // at least one ads URL, so this cannot fall back to ''.
+        landingPageUrl: primaryLandingUrl(input) ?? '',
         usps: input.usps,
         keywords: input.keywords,
         notes: input.notes,
+
+        trackingId: input.trackingId,
+        clientType: input.clientType,
+        ageRestriction: input.ageRestriction,
+        requiredCpl: input.requiredCpl,
+        requiredLeads: input.requiredLeads,
+        performanceParameter: input.performanceParameter,
+        targetApplication: input.targetApplication,
+        targetAdmission: input.targetAdmission,
+        applicationDeadline: input.applicationDeadline,
+        focusedMonths: input.focusedMonths,
+        blockedLocations: input.blockedLocations,
+        accountVisibility: input.accountVisibility,
+        reportingPanel: input.reportingPanel,
+        adUrlKapplpDesktop: input.adUrlKapplpDesktop,
+        adUrlKapplpMobile: input.adUrlKapplpMobile,
+        adUrlKapplpBing: input.adUrlKapplpBing,
+        adUrlClientlpDesktop: input.adUrlClientlpDesktop,
+        adUrlClientlpMobile: input.adUrlClientlpMobile,
+        adUrlClientlpBing: input.adUrlClientlpBing,
+        leadTargets: input.leadTargets?.length
+          ? {
+              create: input.leadTargets.map((t) => ({
+                month: new Date(`${t.month}-01T00:00:00.000Z`),
+                leads: t.leads,
+              })),
+            }
+          : undefined,
+
         createdById: principal.userId,
         events: {
           create: {

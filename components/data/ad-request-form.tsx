@@ -1,10 +1,10 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useForm } from 'react-hook-form';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Loader2, Save, Send } from 'lucide-react';
+import { Loader2, Plus, Save, Send, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -24,36 +24,116 @@ import { OBJECTIVE_LABELS } from './status-badge';
 /**
  * The New / Edit Ad Request form.
  *
- * Mirrors the server's zod schema field for field so the two cannot drift —
- * the client catches a bad value before the round-trip, and the server catches
- * it again for anything that skips the form.
+ * Field for field, this is the "Ads Campaign Activation Requirement Format"
+ * sheet Ops fills today. Everything is a plain text box except the two
+ * genuine choices — client type and age restriction — plus the account picker
+ * and the campaign objective the rest of the CRM already keys off.
+ *
+ * Mirrors the server's zod schema so the two cannot drift: the client catches
+ * a bad value before the round-trip, and the server catches it again for
+ * anything that skips the form.
  */
-const schema = z.object({
-  title: z.string().trim().min(3, 'Give the request a title').max(200),
-  accountId: z.string().optional(),
-  objective: z.enum([
-    'LEAD_GENERATION',
-    'WEBSITE_TRAFFIC',
-    'BRAND_AWARENESS',
-    'APP_PROMOTION',
-    'SALES',
-    'LOCAL_VISITS',
-  ]),
-  productService: z.string().trim().min(2, 'What is being advertised?').max(500),
-  targetAudience: z.string().trim().min(2, 'Describe who the ads should reach').max(1000),
-  location: z.string().trim().min(2, 'Where should the ads run?').max(500),
-  budget: z.coerce.number().positive('Enter a budget above zero'),
-  startDate: z.string().min(1, 'Pick a start date'),
-  endDate: z.string().optional(),
-  landingPageUrl: z
+
+/** Blank is a legitimate answer for most of the sheet. */
+const opt = (max: number) => z.string().trim().max(max).optional();
+
+/**
+ * A number typed into a plain text box.
+ *
+ * Kept numeric — rather than stored as text like the rest — because the flow
+ * does arithmetic on these: CPL approval, and pacing delivered leads against
+ * the monthly plan below.
+ */
+const optNumber = (label: string) =>
+  z
     .string()
     .trim()
-    .url('Enter a full URL, including https://')
-    .refine((v) => /^https?:\/\//i.test(v), 'The URL must start with http:// or https://'),
-  usps: z.string().trim().max(2000).optional(),
-  keywords: z.string().trim().max(5000).optional(),
-  notes: z.string().trim().max(5000).optional(),
-});
+    .optional()
+    .refine((v) => !v || (!Number.isNaN(Number(v)) && Number(v) >= 0), `${label} must be a number`);
+
+const URL_FIELDS = [
+  ['adUrlKapplpDesktop', 'Ads URL (KAPPLP) — Adwords Desktop'],
+  ['adUrlKapplpMobile', 'Ads URL (KAPPLP) — Adwords Mobile'],
+  ['adUrlKapplpBing', 'Ads URL (KAPPLP) — Bing'],
+  ['adUrlClientlpDesktop', 'Ads URL (CLIENTLP) — Adwords Desktop'],
+  ['adUrlClientlpMobile', 'Ads URL (CLIENTLP) — Adwords Mobile'],
+  ['adUrlClientlpBing', 'Ads URL (CLIENTLP) — Bing'],
+] as const;
+
+const urlField = z
+  .string()
+  .trim()
+  .optional()
+  .refine((v) => !v || /^https?:\/\/\S+$/i.test(v), 'Enter a full URL, including https://');
+
+const schema = z
+  .object({
+    // ── Campaign ──────────────────────────────────────────────────────────
+    trackingId: opt(100),
+    title: z.string().trim().min(3, 'Give the campaign a name').max(200),
+    clientType: z.enum(['CLIENT', 'GENERIC', 'NON_CLIENT', 'EXAM']).optional(),
+    productService: z.string().trim().min(2, 'Which courses?').max(500),
+    accountId: z.string().optional(),
+    objective: z.enum([
+      'LEAD_GENERATION',
+      'WEBSITE_TRAFFIC',
+      'BRAND_AWARENESS',
+      'APP_PROMOTION',
+      'SALES',
+      'LOCAL_VISITS',
+    ]),
+
+    // ── Targets ───────────────────────────────────────────────────────────
+    budget: optNumber('Assigned budget'),
+    requiredLeads: optNumber('Required leads'),
+    requiredCpl: optNumber('Required CPL'),
+    performanceParameter: opt(200),
+    targetApplication: optNumber('Target applications'),
+    targetAdmission: opt(200),
+
+    // ── Dates ─────────────────────────────────────────────────────────────
+    startDate: z.string().min(1, 'Pick the client onboarding date'),
+    endDate: z.string().optional(),
+    applicationDeadline: opt(200),
+    focusedMonths: opt(200),
+
+    // ── Targeting ─────────────────────────────────────────────────────────
+    targetAudience: z.string().trim().min(2, 'Describe who the ads should reach').max(1000),
+    ageRestriction: z.enum(['OPEN', 'AGE_18_24']).optional(),
+    location: z.string().trim().min(2, 'Where should the ads run?').max(500),
+    blockedLocations: opt(5000),
+    accountVisibility: opt(200),
+    reportingPanel: opt(200),
+
+    // ── Destination URLs ──────────────────────────────────────────────────
+    adUrlKapplpDesktop: urlField,
+    adUrlKapplpMobile: urlField,
+    adUrlKapplpBing: urlField,
+    adUrlClientlpDesktop: urlField,
+    adUrlClientlpMobile: urlField,
+    adUrlClientlpBing: urlField,
+
+    // ── Free text ─────────────────────────────────────────────────────────
+    keywords: opt(5000),
+    usps: opt(2000),
+    notes: opt(5000),
+
+    leadTargets: z
+      .array(z.object({ month: z.string(), leads: z.string() }))
+      .max(36)
+      .optional(),
+  })
+  .refine((v) => URL_FIELDS.some(([k]) => (v[k] ?? '').trim().length > 0), {
+    message: 'Give at least one ads URL — it is the page we score and write copy against.',
+    path: ['adUrlClientlpDesktop'],
+  })
+  .refine(
+    (v) => {
+      const months = (v.leadTargets ?? []).filter((t) => t.month).map((t) => t.month);
+      return months.length === new Set(months).size;
+    },
+    { message: 'Each month can appear only once.', path: ['leadTargets'] }
+  );
 
 export type AdRequestFormValues = z.infer<typeof schema>;
 
@@ -76,24 +156,53 @@ export function AdRequestForm({
     handleSubmit,
     setValue,
     watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<AdRequestFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       objective: 'LEAD_GENERATION',
+      ageRestriction: 'OPEN',
       startDate: new Date().toISOString().slice(0, 10),
+      leadTargets: [],
       ...defaults,
     },
   });
 
+  const months = useFieldArray({ control, name: 'leadTargets' });
+  const leadRows = watch('leadTargets') ?? [];
+  const plannedTotal = leadRows.reduce((sum, r) => sum + (Number(r?.leads) || 0), 0);
+  const requiredLeads = Number(watch('requiredLeads')) || 0;
+
   async function save(values: AdRequestFormValues, submit: boolean) {
+    const num = (v?: string) => (v && v.trim() !== '' ? Number(v) : null);
+    const str = (v?: string) => (v && v.trim() !== '' ? v.trim() : null);
+
     const payload = {
       ...values,
       accountId: values.accountId && values.accountId !== 'none' ? Number(values.accountId) : null,
+      clientType: values.clientType ?? null,
+      ageRestriction: values.ageRestriction ?? 'OPEN',
+      budget: num(values.budget),
+      requiredLeads: num(values.requiredLeads),
+      requiredCpl: num(values.requiredCpl),
+      targetApplication: num(values.targetApplication),
       endDate: values.endDate || null,
-      usps: values.usps || null,
-      keywords: values.keywords || null,
-      notes: values.notes || null,
+      trackingId: str(values.trackingId),
+      performanceParameter: str(values.performanceParameter),
+      targetAdmission: str(values.targetAdmission),
+      applicationDeadline: str(values.applicationDeadline),
+      focusedMonths: str(values.focusedMonths),
+      blockedLocations: str(values.blockedLocations),
+      accountVisibility: str(values.accountVisibility),
+      reportingPanel: str(values.reportingPanel),
+      usps: str(values.usps),
+      keywords: str(values.keywords),
+      notes: str(values.notes),
+      // Drop half-filled rows rather than sending a month with no number.
+      leadTargets: (values.leadTargets ?? [])
+        .filter((t) => t.month && t.leads !== '')
+        .map((t) => ({ month: t.month, leads: Number(t.leads) })),
     };
 
     try {
@@ -129,37 +238,60 @@ export function AdRequestForm({
 
   const objective = watch('objective');
   const accountId = watch('accountId');
+  const clientType = watch('clientType');
+  const ageRestriction = watch('ageRestriction');
 
   return (
     <form className="space-y-4" noValidate>
+      {/* ── Campaign ──────────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">The brief</CardTitle>
+          <CardTitle className="text-base">Campaign</CardTitle>
           <CardDescription>
-            What the campaign is for. The Google Ads team builds from this, so be specific.
+            What is being activated, and for whom. The Google Ads team builds from this.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <Field
-            className="sm:col-span-2"
-            id="title"
-            label="Title"
-            error={errors.title?.message}
-            hint="A short name everyone will recognise in the queue."
-          >
-            <Input id="title" placeholder="MBA Admissions 2026 — Bangalore" {...register('title')} />
+          <Field id="trackingId" label="New tracking ID" error={errors.trackingId?.message}>
+            <Input id="trackingId" placeholder="13000047" {...register('trackingId')} />
           </Field>
 
-          <Field id="accountId" label="Client / account" error={errors.accountId?.message}>
+          <Field id="title" label="Campaign / client name" error={errors.title?.message}>
+            <Input id="title" placeholder="JIMS Rohini" {...register('title')} />
+          </Field>
+
+          <Field
+            id="clientType"
+            label="Client / Generic / NonClient / Exam"
+            error={errors.clientType?.message}
+          >
             <Select
-              value={accountId ?? 'none'}
-              onValueChange={(v) => setValue('accountId', v, { shouldValidate: true })}
+              value={clientType ?? ''}
+              onValueChange={(v) => setValue('clientType', v as AdRequestFormValues['clientType'])}
             >
-              <SelectTrigger id="accountId">
-                <SelectValue placeholder="Pick an account" />
+              <SelectTrigger id="clientType">
+                <SelectValue placeholder="Select a type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">No specific account</SelectItem>
+                <SelectItem value="CLIENT">Client</SelectItem>
+                <SelectItem value="GENERIC">Generic</SelectItem>
+                <SelectItem value="NON_CLIENT">NonClient</SelectItem>
+                <SelectItem value="EXAM">Exam</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+
+          <Field id="productService" label="Courses" error={errors.productService?.message}>
+            <Input id="productService" placeholder="MBA/PGDM" {...register('productService')} />
+          </Field>
+
+          <Field id="accountId" label="Google Ads account" error={errors.accountId?.message}>
+            <Select value={accountId ?? 'none'} onValueChange={(v) => setValue('accountId', v)}>
+              <SelectTrigger id="accountId">
+                <SelectValue placeholder="Not linked yet" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not linked yet</SelectItem>
                 {(accountData?.accounts ?? []).map((a) => (
                   <SelectItem key={a.id} value={String(a.id)}>
                     {a.name ?? a.customerId}
@@ -172,11 +304,7 @@ export function AdRequestForm({
           <Field id="objective" label="Campaign objective" error={errors.objective?.message}>
             <Select
               value={objective}
-              onValueChange={(v) =>
-                setValue('objective', v as AdRequestFormValues['objective'], {
-                  shouldValidate: true,
-                })
-              }
+              onValueChange={(v) => setValue('objective', v as AdRequestFormValues['objective'])}
             >
               <SelectTrigger id="objective">
                 <SelectValue />
@@ -190,121 +318,273 @@ export function AdRequestForm({
               </SelectContent>
             </Select>
           </Field>
+        </CardContent>
+      </Card>
 
-          <Field
-            className="sm:col-span-2"
-            id="productService"
-            label="Product or service"
-            error={errors.productService?.message}
-          >
-            <Input
-              id="productService"
-              placeholder="Two-year full-time MBA"
-              {...register('productService')}
-            />
+      {/* ── Targets ───────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Targets</CardTitle>
+          <CardDescription>
+            Budget and CPL are optional here — Ops applies them at the budget stage, which is why
+            the sheet leaves them blank at submission.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field id="budget" label="Assigned budget (₹)" error={errors.budget?.message}>
+            <Input id="budget" inputMode="decimal" placeholder="Set at the budget stage" {...register('budget')} />
           </Field>
-
+          <Field id="requiredLeads" label="Required leads" error={errors.requiredLeads?.message}>
+            <Input id="requiredLeads" inputMode="numeric" placeholder="100" {...register('requiredLeads')} />
+          </Field>
+          <Field id="requiredCpl" label="Required CPL (₹)" error={errors.requiredCpl?.message}>
+            <Input id="requiredCpl" inputMode="decimal" placeholder="Set at the budget stage" {...register('requiredCpl')} />
+          </Field>
           <Field
-            className="sm:col-span-2"
+            id="performanceParameter"
+            label="Performance parameter"
+            error={errors.performanceParameter?.message}
+          >
+            <Input id="performanceParameter" placeholder="Applications" {...register('performanceParameter')} />
+          </Field>
+          <Field
+            id="targetApplication"
+            label="Target applications"
+            error={errors.targetApplication?.message}
+          >
+            <Input id="targetApplication" inputMode="numeric" placeholder="35" {...register('targetApplication')} />
+          </Field>
+          <Field
+            id="targetAdmission"
+            label="Target admissions"
+            hint="Free text — a dash is fine."
+            error={errors.targetAdmission?.message}
+          >
+            <Input id="targetAdmission" placeholder="-" {...register('targetAdmission')} />
+          </Field>
+        </CardContent>
+      </Card>
+
+      {/* ── Dates ─────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Dates</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field id="startDate" label="Client onboarding date" error={errors.startDate?.message}>
+            <Input id="startDate" type="date" {...register('startDate')} />
+          </Field>
+          <Field id="endDate" label="End date" hint="Optional." error={errors.endDate?.message}>
+            <Input id="endDate" type="date" {...register('endDate')} />
+          </Field>
+          <Field
+            id="applicationDeadline"
+            label="Application deadline"
+            hint='Free text — "End of February" is fine.'
+            error={errors.applicationDeadline?.message}
+          >
+            <Input id="applicationDeadline" placeholder="End of February" {...register('applicationDeadline')} />
+          </Field>
+          <Field id="focusedMonths" label="Focused months" error={errors.focusedMonths?.message}>
+            <Input id="focusedMonths" placeholder="Sep-Jun" {...register('focusedMonths')} />
+          </Field>
+        </CardContent>
+      </Card>
+
+      {/* ── Targeting ─────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Targeting</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <Field
             id="targetAudience"
             label="Target audience"
+            className="sm:col-span-2"
             error={errors.targetAudience?.message}
           >
             <Textarea
               id="targetAudience"
               rows={2}
-              placeholder="Graduates aged 21–26 in metro India considering a full-time MBA in 2026"
+              placeholder="Graduates in Delhi NCR applying for MBA 2027"
               {...register('targetAudience')}
             />
           </Field>
 
-          <Field id="location" label="Location" error={errors.location?.message}>
-            <Input id="location" placeholder="Bangalore, Chennai, Hyderabad" {...register('location')} />
+          <Field id="ageRestriction" label="Age restriction" error={errors.ageRestriction?.message}>
+            <Select
+              value={ageRestriction ?? 'OPEN'}
+              onValueChange={(v) =>
+                setValue('ageRestriction', v as AdRequestFormValues['ageRestriction'])
+              }
+            >
+              <SelectTrigger id="ageRestriction">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="OPEN">Open</SelectItem>
+                <SelectItem value="AGE_18_24">18-24 Year</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
 
           <Field
-            id="budget"
-            label="Budget"
-            error={errors.budget?.message}
-            hint="Total for the flight, in the account currency."
+            id="accountVisibility"
+            label="Open / Hidden / OtherAccount / Domain"
+            error={errors.accountVisibility?.message}
           >
-            <Input id="budget" type="number" min={0} step="0.01" {...register('budget')} />
+            <Input id="accountVisibility" placeholder="Hidden" {...register('accountVisibility')} />
           </Field>
 
-          <Field id="startDate" label="Start date" error={errors.startDate?.message}>
-            <Input id="startDate" type="date" {...register('startDate')} />
+          <Field id="location" label="Location (need to be run)" error={errors.location?.message}>
+            <Input id="location" placeholder="Delhi" {...register('location')} />
           </Field>
 
-          <Field
-            id="endDate"
-            label="End date"
-            error={errors.endDate?.message}
-            hint="Leave blank to run until paused."
-          >
-            <Input id="endDate" type="date" {...register('endDate')} />
+          <Field id="reportingPanel" label="Reporting panel" error={errors.reportingPanel?.message}>
+            <Input id="reportingPanel" placeholder="NPF 5" {...register('reportingPanel')} />
           </Field>
 
           <Field
+            id="blockedLocations"
+            label="Location (to be blocked)"
             className="sm:col-span-2"
-            id="landingPageUrl"
-            label="Landing page URL"
-            error={errors.landingPageUrl?.message}
-            hint="The Ads team scores this page from inside the request."
+            hint="Pincodes or areas, comma separated."
+            error={errors.blockedLocations?.message}
           >
-            <Input
-              id="landingPageUrl"
-              type="url"
-              inputMode="url"
-              placeholder="https://example.com/mba-admissions"
-              {...register('landingPageUrl')}
+            <Textarea
+              id="blockedLocations"
+              rows={2}
+              placeholder="110085, 110019, 110070, 110024"
+              {...register('blockedLocations')}
             />
           </Field>
         </CardContent>
       </Card>
 
+      {/* ── Destination URLs ──────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Supporting detail</CardTitle>
+          <CardTitle className="text-base">Ads URLs</CardTitle>
           <CardDescription>
-            Optional, but it is what the AI copy generator draws on.
+            At least one is required. The first one present is the page we score and write ad copy
+            against, client pages first.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4">
-          <Field id="usps" label="USPs and offers" error={errors.usps?.message}>
-            <Textarea
-              id="usps"
-              rows={3}
-              placeholder="NAAC A++, 100% placement record, scholarships up to 50%, applications close 31 July"
-              {...register('usps')}
-            />
-          </Field>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          {URL_FIELDS.map(([name, label]) => (
+            <Field key={name} id={name} label={label} error={errors[name]?.message}>
+              <Input id={name} placeholder="https://" {...register(name)} />
+            </Field>
+          ))}
+        </CardContent>
+      </Card>
 
+      {/* ── Monthly lead plan ─────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Monthly lead plan</CardTitle>
+          <CardDescription>
+            Optional. How the required leads are expected to land month by month.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {months.fields.length === 0 && (
+            <p className="text-sm text-muted-foreground">No months added yet.</p>
+          )}
+          {months.fields.map((row, i) => (
+            <div key={row.id} className="flex items-end gap-2">
+              <Field id={`leadTargets.${i}.month`} label={i === 0 ? 'Month' : ''} className="flex-1">
+                <Input
+                  id={`leadTargets.${i}.month`}
+                  type="month"
+                  {...register(`leadTargets.${i}.month` as const)}
+                />
+              </Field>
+              <Field id={`leadTargets.${i}.leads`} label={i === 0 ? 'Leads' : ''} className="w-32">
+                <Input
+                  id={`leadTargets.${i}.leads`}
+                  inputMode="numeric"
+                  placeholder="0"
+                  {...register(`leadTargets.${i}.leads` as const)}
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={`Remove month ${i + 1}`}
+                onClick={() => months.remove(i)}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+
+          {errors.leadTargets?.message && (
+            <p className="text-xs text-destructive">{errors.leadTargets.message}</p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => months.append({ month: '', leads: '' })}
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Add month
+            </Button>
+            {months.fields.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Planned total <span className="font-medium tabular-nums">{plannedTotal}</span>
+                {requiredLeads > 0 && (
+                  <>
+                    {' '}
+                    of <span className="font-medium tabular-nums">{requiredLeads}</span> required
+                    {plannedTotal !== requiredLeads && (
+                      <span className="text-amber-600 dark:text-amber-500">
+                        {' '}
+                        — {plannedTotal > requiredLeads ? 'over' : 'short'} by{' '}
+                        {Math.abs(requiredLeads - plannedTotal)}
+                      </span>
+                    )}
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Notes ─────────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Keywords and remarks</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4">
           <Field
             id="keywords"
-            label="Keywords"
+            label="Any specific keyword"
+            hint="Needing primary focus — related exam, programme, and so on."
             error={errors.keywords?.message}
-            hint="One per line. Optional — the team will research more."
           >
-            <Textarea
-              id="keywords"
-              rows={4}
-              placeholder={'mba admission 2026\nbest mba college bangalore\nmba fees'}
-              {...register('keywords')}
-            />
+            <Textarea id="keywords" rows={3} {...register('keywords')} />
           </Field>
-
-          <Field id="notes" label="Notes" error={errors.notes?.message}>
+          <Field id="usps" label="USPs and offers" error={errors.usps?.message}>
+            <Textarea id="usps" rows={2} {...register('usps')} />
+          </Field>
+          <Field id="notes" label="Remarks" error={errors.notes?.message}>
             <Textarea
               id="notes"
-              rows={3}
-              placeholder="Anything the reviewer or the Ads team should know."
+              rows={2}
+              placeholder="Run using age filter, in night from 9 PM to 5 AM"
               {...register('notes')}
             />
           </Field>
         </CardContent>
       </Card>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+      <div className="flex flex-wrap gap-2">
         <Button
           type="button"
           variant="outline"
@@ -312,24 +592,19 @@ export function AdRequestForm({
           onClick={handleSubmit((v) => save(v, false))}
         >
           {isSubmitting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
           ) : (
-            <Save className="mr-2 h-4 w-4" aria-hidden="true" />
+            <Save className="mr-1.5 h-4 w-4" aria-hidden="true" />
           )}
-          Save as draft
+          Save draft
         </Button>
-        <Button
-          type="button"
-          className="btn-sheen"
-          disabled={isSubmitting}
-          onClick={handleSubmit((v) => save(v, true))}
-        >
+        <Button type="button" disabled={isSubmitting} onClick={handleSubmit((v) => save(v, true))}>
           {isSubmitting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
           ) : (
-            <Send className="mr-2 h-4 w-4" aria-hidden="true" />
+            <Send className="mr-1.5 h-4 w-4" aria-hidden="true" />
           )}
-          Submit for approval
+          {requestId ? 'Save and resubmit' : 'Submit for approval'}
         </Button>
       </div>
     </form>
@@ -353,7 +628,7 @@ function Field({
 }) {
   return (
     <div className={`space-y-1.5 ${className ?? ''}`}>
-      <Label htmlFor={id}>{label}</Label>
+      {label ? <Label htmlFor={id}>{label}</Label> : null}
       {children}
       {error ? (
         <p className="text-xs text-destructive">{error}</p>
