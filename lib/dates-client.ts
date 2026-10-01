@@ -10,9 +10,21 @@ export type RangePreset = {
   key: string;
   label: string;
   days: number;
+  /**
+   * How many days before the anchor the window ends. 0 for every rolling
+   * preset; 1 for "Yesterday", which is the only one that stops short of the
+   * most recent day.
+   */
+  offsetDays?: number;
 };
 
 export const RANGE_PRESETS: RangePreset[] = [
+  // "Today" is the latest day with data, not the wall-clock date — the same
+  // anchor every other preset uses. The current calendar day is still
+  // accumulating and is usually not synced at all, so pointing these at it
+  // would show an empty screen rather than the day someone wants to see.
+  { key: 'today', label: 'Today', days: 1, offsetDays: 0 },
+  { key: 'yesterday', label: 'Yesterday', days: 1, offsetDays: 1 },
   { key: '7d', label: 'Last 7 days', days: 7 },
   { key: '14d', label: 'Last 14 days', days: 14 },
   { key: '30d', label: 'Last 30 days', days: 30 },
@@ -26,6 +38,10 @@ export const DEFAULT_PRESET = '30d';
 
 export function presetDays(key: string): number {
   return RANGE_PRESETS.find((p) => p.key === key)?.days ?? 30;
+}
+
+export function presetOffset(key: string): number {
+  return RANGE_PRESETS.find((p) => p.key === key)?.offsetDays ?? 0;
 }
 
 export function presetLabel(key: string): string {

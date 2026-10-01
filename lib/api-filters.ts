@@ -20,6 +20,8 @@ export const filterSchema = z
   .object({
     accountId: z.coerce.number().int().positive().optional(),
     days: z.coerce.number().int().min(1).max(MAX_WINDOW_DAYS).optional(),
+    /** Days to step the window back from the latest synced day. */
+    offset: z.coerce.number().int().min(0).max(MAX_WINDOW_DAYS).optional(),
     start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })
@@ -60,6 +62,7 @@ export async function resolveFilters(
   const { accountId, accountIds } = scopeAccountId(principal, q.accountId ?? null);
   const { start, end } = await resolveWindow({
     days: q.days,
+    offset: q.offset,
     start: q.start ?? null,
     end: q.end ?? null,
   });

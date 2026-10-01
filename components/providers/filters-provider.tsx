@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { DEFAULT_PRESET, presetDays } from '@/lib/dates-client';
+import { DEFAULT_PRESET, presetDays, presetOffset } from '@/lib/dates-client';
 
 /**
  * The global account + date-window filter shown in the top bar.
@@ -16,6 +16,8 @@ type FiltersValue = {
   accountId: number | null;
   preset: string;
   days: number;
+  /** Days the window stops short of the latest synced day ("Yesterday"). */
+  offset: number;
   start: string | null;
   end: string | null;
   setAccount: (id: number | null) => void;
@@ -49,10 +51,12 @@ export function FiltersProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<FiltersValue>(() => {
     const days = preset === 'custom' ? 0 : presetDays(preset);
+    const offset = preset === 'custom' ? 0 : presetOffset(preset);
     return {
       accountId,
       preset,
       days,
+      offset,
       start,
       end,
       setAccount: (id) =>
@@ -80,6 +84,9 @@ export function FiltersProvider({ children }: { children: ReactNode }) {
           sp.set('end', end);
         } else {
           sp.set('days', String(days));
+          // Only sent when it means something, so every existing URL and
+          // cached query key stays byte-identical.
+          if (offset > 0) sp.set('offset', String(offset));
         }
         for (const [k, v] of Object.entries(extra)) {
           if (v !== null && v !== undefined && v !== '') sp.set(k, String(v));

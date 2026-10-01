@@ -60,9 +60,20 @@ export async function resolveRefDates(): Promise<RefDates> {
   return { latest, prior: addDays(latest, -1), earliest };
 }
 
-/** Inclusive (start, end) window of `days` ending at `latest`. */
-export function windowOf(refs: RefDates, days: number): { start: Date; end: Date } {
-  return { start: addDays(refs.latest, -Math.max(0, days - 1)), end: refs.latest };
+/**
+ * Inclusive (start, end) window of `days` ending `offset` days before
+ * `latest`.
+ *
+ * `offset` exists for "Yesterday", the one preset that stops short of the
+ * most recent day. Everything else ends at `latest`.
+ */
+export function windowOf(
+  refs: RefDates,
+  days: number,
+  offset = 0
+): { start: Date; end: Date } {
+  const end = addDays(refs.latest, -Math.max(0, offset));
+  return { start: addDays(end, -Math.max(0, days - 1)), end };
 }
 
 /**
@@ -91,6 +102,7 @@ export function fractionOfDayElapsed(now: Date = new Date()): number {
  */
 export async function resolveWindow(params: {
   days?: number;
+  offset?: number;
   start?: string | null;
   end?: string | null;
 }): Promise<{ refs: RefDates; start: Date; end: Date }> {
@@ -98,7 +110,7 @@ export async function resolveWindow(params: {
   if (params.start && params.end) {
     return { refs, start: utcDay(params.start), end: utcDay(params.end) };
   }
-  const { start, end } = windowOf(refs, params.days ?? 30);
+  const { start, end } = windowOf(refs, params.days ?? 30, params.offset ?? 0);
 
   // Clamp a preset that reaches past the data to the first day there is any.
   // "All time" is a 10-year rolling window, so without this it reported a
