@@ -207,6 +207,43 @@ async function ensureUser(email: string, name: string, roleSlug: string) {
   });
 }
 
+/**
+ * Delete everything this suite created.
+ *
+ * Order matters: the RESTRICT foreign keys on landing scores, copy versions
+ * and reviews have to go before the users that own them.
+ */
+async function cleanUpFixtures(): Promise<void> {
+  const emails = [
+    'e2e.ops@kollegeapply.com',
+    'e2e.manager@kollegeapply.com',
+    'e2e.ads@kollegeapply.com',
+    'e2e.accountmanager@example.com',
+    'e2e.pending-password@example.com',
+    'e2e.exporter-no-money@example.com',
+  ];
+  const users = await prisma.crmUser.findMany({
+    where: { email: { in: emails } },
+    select: { id: true },
+  });
+  const userIds = users.map((u) => u.id);
+  if (userIds.length) {
+    const requests = await prisma.crmAdRequest.findMany({
+      where: { createdById: { in: userIds } },
+      select: { id: true },
+    });
+    const requestIds = requests.map((r) => r.id);
+    await prisma.crmLandingScore.deleteMany({ where: { createdById: { in: userIds } } });
+    await prisma.crmAdCopyVersion.deleteMany({ where: { createdById: { in: userIds } } });
+    await prisma.crmAdRequestReview.deleteMany({ where: { reviewerId: { in: userIds } } });
+    if (requestIds.length) {
+      await prisma.crmAdRequest.deleteMany({ where: { id: { in: requestIds } } });
+    }
+    await prisma.crmUser.deleteMany({ where: { id: { in: userIds } } });
+  }
+  await prisma.crmRole.deleteMany({ where: { slug: { startsWith: 'e2e-' } } });
+}
+
 async function main() {
   console.log(`\nRunning against ${BASE}\n`);
 
@@ -745,8 +782,15 @@ async function main() {
     await prisma.crmUser.deleteMany({ where: { email: pendingEmail } });
   }
 
-  // Leave nothing behind but the users, which a re-run reuses.
+  // Leave nothing behind at all.
+  //
+  // This used to keep its users and roles "because a re-run reuses them",
+  // which meant every test run repopulated the real Users and Roles screens
+  // with e2e.* accounts. A suite that dirties the list it is testing is not
+  // worth the few seconds it saves; the fixtures are rebuilt from SEED_ROLES
+  // at the start of each run anyway.
   await prisma.crmAdRequest.deleteMany({ where: { id: requestId } });
+  await cleanUpFixtures();
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
   if (failed > 0) process.exitCode = 1;
