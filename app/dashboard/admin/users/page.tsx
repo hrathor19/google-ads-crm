@@ -291,7 +291,13 @@ export default function UsersPage() {
                 value={form.password}
                 onChange={(e) => setForm({ ...form, password: e.target.value })}
                 placeholder="At least 10 characters, mixed case and a number"
+                aria-describedby="newPass-rule"
               />
+              {/* A placeholder disappears the moment you type, which is
+                  exactly when the rule matters. Keep it on screen. */}
+              <p id="newPass-rule" className="text-xs text-muted-foreground">
+                At least 10 characters, with an uppercase letter, a lowercase letter and a number.
+              </p>
             </div>
           </div>
           <DialogFooter>

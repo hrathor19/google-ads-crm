@@ -132,8 +132,29 @@ export async function parseBody<T>(req: Request, schema: ZodSchema<T>): Promise<
     throw badRequest('Request body must be valid JSON.');
   }
   const result = schema.safeParse(raw);
-  if (!result.success) throw badRequest('Invalid request.', result.error.flatten());
+  if (!result.success) throw badRequest(describeZodError(result.error), result.error.flatten());
   return result.data;
+}
+
+/**
+ * Turn a validation failure into something the person reading it can act on.
+ *
+ * The messages are already written on the schema — "Use at least 10
+ * characters" — but they were being thrown away behind a flat "Invalid
+ * request.", which tells someone their password was rejected without saying
+ * why. The detail was in the response all along; nothing rendered it.
+ */
+function describeZodError(error: ZodError): string {
+  const flat = error.flatten();
+  const field = Object.entries(flat.fieldErrors).find(([, msgs]) => msgs && msgs.length > 0);
+  if (field) {
+    const [name, msgs] = field;
+    const label = name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+    const message = msgs![0]!;
+    // Avoid "Email: Enter a valid email address" reading as a stutter.
+    return message.toLowerCase().includes(label) ? message : `${label}: ${message}`;
+  }
+  return flat.formErrors[0] ?? 'Invalid request.';
 }
 
 /** Parse and validate query string params. */
@@ -141,7 +162,7 @@ export function parseQuery<T>(req: Request, schema: ZodSchema<T>): T {
   const url = new URL(req.url);
   const obj = Object.fromEntries(url.searchParams.entries());
   const result = schema.safeParse(obj);
-  if (!result.success) throw badRequest('Invalid query parameters.', result.error.flatten());
+  if (!result.success) throw badRequest(describeZodError(result.error), result.error.flatten());
   return result.data;
 }
 
