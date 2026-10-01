@@ -101,6 +101,20 @@ export const env = {
     maxRetries: num('SYNC_MAX_RETRIES', 3),
     retryBackoffSeconds: num('SYNC_RETRY_BACKOFF_SECONDS', 30),
     defaultLookbackDays: num('SYNC_DEFAULT_LOOKBACK_DAYS', 30),
+    /**
+     * Sync accounts the Google Ads account status marks SUSPENDED.
+     *
+     * The source project never does: it sets `is_syncable = status ==
+     * "ENABLED"` and syncs only syncable, non-manager accounts. That hides
+     * real money — 19 suspended accounts in this MCC hold 237,909 clicks and
+     * about ₹39 lakh of spend, including the earliest activity anywhere
+     * (2025-05-16), which is why the history looked like it began on the 23rd.
+     *
+     * A suspended account's past spend still happened, so it belongs in
+     * historical reporting. Set this to false to go back to matching the
+     * source app exactly.
+     */
+    includeSuspended: bool('SYNC_INCLUDE_SUSPENDED', true),
   }),
 
   landingPage: () => ({

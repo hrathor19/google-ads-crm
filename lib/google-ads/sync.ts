@@ -181,6 +181,24 @@ async function replaceWindow(
 }
 
 /**
+ * Which accounts a sync covers.
+ *
+ * `is_syncable` is maintained by the source project as `status == "ENABLED"`,
+ * and it writes to this same database, so the column cannot be repurposed —
+ * it would be overwritten on that app's next account sync, and changing it
+ * would alter that app's behaviour. The decision is made here instead, and
+ * the column is left alone.
+ *
+ * Manager accounts are always excluded: the Google Ads API refuses metrics on
+ * an MCC outright ("Metrics cannot be requested for a manager account").
+ */
+function accountScopeFilter() {
+  return env.sync().includeSuspended
+    ? { is_manager: false }
+    : { is_manager: false, is_syncable: true };
+}
+
+/**
  * Map a fetched dict onto the shared snapshot columns.
  *
  * The return type is inferred rather than widened to
@@ -261,7 +279,7 @@ export async function syncAccounts(syncType: SyncRunType = 'manual'): Promise<{
     await closeSyncLog(logId, 'success', { inserted, updated, failed: 0 }, null, t0);
 
     const accounts = await prisma.accounts.findMany({
-      where: { is_manager: false, is_syncable: true },
+      where: accountScopeFilter(),
       select: { id: true, customer_id: true, descriptive_name: true },
       orderBy: { customer_id: 'asc' },
     });
@@ -903,7 +921,7 @@ export async function runSync(
     accounts = discovered;
   } else {
     const rows = await prisma.accounts.findMany({
-      where: { is_manager: false, is_syncable: true },
+      where: accountScopeFilter(),
       select: { id: true, customer_id: true, descriptive_name: true },
     });
     accounts = rows.map((a) => ({

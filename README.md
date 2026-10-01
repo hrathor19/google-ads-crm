@@ -223,6 +223,28 @@ Added by this app:
 misconfigured deploy says what is missing instead of throwing a null-pointer
 three layers down.
 
+### Suspended accounts
+
+`SYNC_INCLUDE_SUSPENDED` (default `true`) is a deliberate divergence from the
+source project, which syncs only accounts whose Google Ads status is
+`ENABLED` (`is_syncable = status == "ENABLED"`).
+
+That rule hides money that was really spent. In this MCC, 19 non-ENABLED
+accounts hold roughly 237,909 clicks and ₹39 lakh, including the earliest
+activity anywhere — 2025-05-16, a week before the 2025-05-23 that the
+ENABLED-only history appears to start on.
+
+Two consequences worth knowing:
+
+- **The two apps share one database, and neither filters reporting by
+  `is_syncable`.** Backfilling these accounts therefore changes the Google Ads
+  Intelligence dashboards too, not just this app's.
+- `npm run parity` is unaffected, because both engines read the same tables.
+
+Set it to `false` to match the source app exactly. The `is_syncable` column
+itself is never written by this app: the source project maintains it and would
+overwrite any change, so the decision is made in the query instead.
+
 ### Secrets
 
 `.env` is gitignored. Every module that touches a credential imports
