@@ -96,6 +96,7 @@ tests/                     vitest suites
 | `npm run e2e` | Workflow + RBAC end-to-end, over HTTP (needs the dev server up) |
 | `npm run check:responsive` | Real Chrome at 360 / 768 / 1280 px, plus accessibility checks |
 | `npm run parity` | Diff this app's aggregation against the Python app's, both captured live. `-- --days=N` widens the window; the default 30 days only covers what the dashboards show, so use a long window after a backfill |
+| `npm run check:writes` | Sync every entity for one account and one month and assert rows actually land. `npm run parity` cannot catch a broken writer — both engines read the same table, so one that has never worked still reports parity |
 | `npm run check:secrets` | Fail if a value from `.env` reached the browser bundle. Run it after `npm run build`, never against a `next dev` bundle — it refuses one |
 | `npm run sync` | Manual Google Ads sync |
 | `npm run db:seed` / `db:migrate` / `db:studio` | Prisma |
@@ -409,6 +410,7 @@ npm run e2e               # 65 end-to-end checks (dev server must be running)
 npm run check:responsive  # 291 assertions in real Chrome
 npm run parity            # 27 metric comparisons against the Python app
 npm run check:secrets     # no .env value in the client bundle (after a build)
+npm run check:writes      # every sync entity can actually write (hits the live API)
 ```
 
 - **Parity** is asserted as a *relationship*, not a frozen snapshot: the Python
