@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils';
 export const REQUEST_STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Draft',
   SUBMITTED: 'Submitted',
-  AWAITING_AM_ASSIGNMENT: 'Awaiting Account Manager',
-  AM_ASSIGNED: 'Account Manager assigned',
+  AWAITING_AM_ASSIGNMENT: 'Awaiting assignment',
+  AM_ASSIGNED: 'Ad Specialist assigned',
   AWAITING_AD_SUBMISSION: 'Awaiting ad submission',
   ADS_SUBMITTED: 'Ads submitted',
   UNDER_REVIEW: 'Under review',
@@ -34,12 +34,12 @@ export const REQUEST_STATUS_LABELS: Record<string, string> = {
  */
 export const REQUEST_ACTION_LABELS: Record<string, string> = {
   SUBMITTED: 'Submit',
-  AM_ASSIGNED: 'Assign Account Manager',
+  AM_ASSIGNED: 'Assign the Ad Specialist',
   ADS_SUBMITTED: 'Submit keywords and ad copy',
   RECHECK_REQUESTED: 'Request a recheck',
   REVIEW_APPROVED: 'Approve the review',
   BUDGET_APPROVED: 'Apply budget and CPL',
-  ACCOUNT_ASSIGNED: 'Assign the Ad Specialist',
+  ACCOUNT_ASSIGNED: 'Hand over the full account',
   LIVE: 'Mark live',
   COMPLETED: 'Complete',
   REJECTED: 'Reject',

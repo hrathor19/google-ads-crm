@@ -382,20 +382,31 @@ async function main() {
 
   console.log('\n── Workflow: steps 3-4, the Account Manager ──');
 
-  const amUser = await ensureUser('e2e.accountmanager@example.com', 'E2E Account Manager', 'manager');
+  // Step 3 hands the account to whoever will build it.
+  const amUser = adsTeam;
 
-  const noAm = await opsSession.json<{ error: string }>(`/api/ad-requests/${requestId}/transition`, {
-    method: 'POST',
-    body: JSON.stringify({ target: 'AM_ASSIGNED' }),
-  });
+  const noAm = await managerSession.json<{ error: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED' }) }
+  );
   check('Assigning with nobody named is refused', noAm.status === 400, noAm.body?.error);
 
-  const amAssigned = await opsSession.json<{ status: string }>(
+  const opsCannotAssign = await opsSession.json<{ error: string }>(
     `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED', accountManagerId: amUser.id }) }
+    { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED', adSpecialistId: amUser.id }) }
   );
   check(
-    'Ops assigns an Account Manager, and the system advances to awaiting ads',
+    'Operations cannot assign anyone',
+    opsCannotAssign.status === 403,
+    `got ${opsCannotAssign.status}`
+  );
+
+  const amAssigned = await managerSession.json<{ status: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED', adSpecialistId: amUser.id }) }
+  );
+  check(
+    'The Manager assigns the Ad Specialist, and the system advances to awaiting ads',
     amAssigned.status === 200 && amAssigned.body.status === 'AWAITING_AD_SUBMISSION',
     `got ${amAssigned.body?.status}`
   );
@@ -441,23 +452,33 @@ async function main() {
   );
   check('Ops approves the review', reviewApproved.status === 200 && reviewApproved.body.status === 'REVIEW_APPROVED');
 
-  const noBudget = await opsSession.json<{ error: string }>(
+  const opsCannotBudget = await opsSession.json<{ error: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED', budget: 250000, requiredCpl: 2500 }) }
+  );
+  check(
+    'Operations cannot set the budget, even though it approved the copy',
+    opsCannotBudget.status === 403,
+    `got ${opsCannotBudget.status}`
+  );
+
+  const noBudget = await managerSession.json<{ error: string }>(
     `/api/ad-requests/${requestId}/transition`,
     { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED' }) }
   );
   check('Budget approval with no budget is refused', noBudget.status === 400, noBudget.body?.error);
 
-  const budgetApproved = await opsSession.json<{ status: string }>(
+  const budgetApproved = await managerSession.json<{ status: string }>(
     `/api/ad-requests/${requestId}/transition`,
     { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED', budget: 250000, requiredCpl: 2500 }) }
   );
-  check('Ops applies the budget and CPL', budgetApproved.status === 200 && budgetApproved.body.status === 'BUDGET_APPROVED');
+  check('The Manager applies the budget and CPL', budgetApproved.status === 200 && budgetApproved.body.status === 'BUDGET_APPROVED');
 
-  const accountAssigned = await opsSession.json<{ status: string }>(
+  const accountAssigned = await managerSession.json<{ status: string }>(
     `/api/ad-requests/${requestId}/transition`,
     { method: 'POST', body: JSON.stringify({ target: 'ACCOUNT_ASSIGNED', adSpecialistId: adsTeam.id }) }
   );
-  check('The account is assigned to the Ad Specialist', accountAssigned.status === 200 && accountAssigned.body.status === 'ACCOUNT_ASSIGNED');
+  check('The Manager assigns the Ad Specialist', accountAssigned.status === 200 && accountAssigned.body.status === 'ACCOUNT_ASSIGNED');
 
   const specialistQueue = await adsSession.json<{ rows: Array<{ id: string }> }>(
     '/api/ad-requests?status=AWAITING_AD_SUBMISSION,RECHECK_REQUESTED,ACCOUNT_ASSIGNED,LIVE'

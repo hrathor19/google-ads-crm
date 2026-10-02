@@ -19,6 +19,8 @@ export const ACTIONS = [
   'DELETE',
   'APPROVE',
   'ASSIGN',
+  'BUDGET',
+  'BUILD',
   'EXPORT',
   'GENERATE_AI',
   'MANAGE',
@@ -78,7 +80,7 @@ export const MODULES: ModuleDef[] = [
     key: 'AD_REQUESTS',
     label: 'Ad Requests',
     description: 'The request workflow: raise, edit, review and progress ad requests.',
-    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'APPROVE', 'ASSIGN', 'EXPORT'],
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'APPROVE', 'ASSIGN', 'BUDGET', 'BUILD', 'EXPORT'],
   },
   {
     key: 'AD_COPY',
@@ -131,6 +133,8 @@ export const ACTION_LABELS: Record<Action, string> = {
   DELETE: 'Delete',
   APPROVE: 'Approve',
   ASSIGN: 'Assign people',
+  BUDGET: 'Set budget and CPL',
+  BUILD: 'Build and launch campaigns',
   EXPORT: 'Export',
   GENERATE_AI: 'Generate AI',
   MANAGE: 'Manage',
@@ -184,7 +188,8 @@ export const SEED_ROLES: SeedRole[] = [
     slug: 'manager',
     name: 'Manager',
     description:
-      'Reviews and approves ad requests, sees all reporting including spend, cannot manage users or roles.',
+      'Assigns the Account Manager and Ad Specialist, sets the budget and CPL, and sees all ' +
+      'reporting including spend. Cannot manage users or roles.',
     features: [
       ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS', 'FINANCIALS', 'ANALYTICS'),
       feature('DASHBOARD', 'EXPORT'),
@@ -192,7 +197,17 @@ export const SEED_ROLES: SeedRole[] = [
       feature('CAMPAIGNS', 'EXPORT'),
       feature('KEYWORDS', 'EXPORT'),
       feature('FINANCIALS', 'EXPORT'),
-      ...all('AD_REQUESTS'),
+      // Every AD_REQUESTS action except BUILD. A Manager runs the approval
+      // side; they are not someone you would assign a campaign to, and
+      // granting BUILD would put them in the Ad Specialist picker.
+      feature('AD_REQUESTS', 'VIEW'),
+      feature('AD_REQUESTS', 'CREATE'),
+      feature('AD_REQUESTS', 'EDIT'),
+      feature('AD_REQUESTS', 'DELETE'),
+      feature('AD_REQUESTS', 'APPROVE'),
+      feature('AD_REQUESTS', 'ASSIGN'),
+      feature('AD_REQUESTS', 'BUDGET'),
+      feature('AD_REQUESTS', 'EXPORT'),
       feature('AD_COPY', 'VIEW'),
       feature('LANDING_SCORE', 'VIEW'),
       feature('AUDIT', 'VIEW'),
@@ -203,16 +218,18 @@ export const SEED_ROLES: SeedRole[] = [
     slug: 'operations',
     name: 'Operations',
     description:
-      'Raises ad requests and tracks them through approval. Reporting without financial data.',
+      'Raises ad requests and reviews the keywords and ad copy. Does not assign people or set ' +
+      'budgets. Reporting without financial data.',
     features: [
       ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS'),
       feature('AD_REQUESTS', 'VIEW'),
       feature('AD_REQUESTS', 'CREATE'),
       feature('AD_REQUESTS', 'EDIT'),
-      // Ops reviews the ads and applies the budget — steps 7, 9 and 10 — and
-      // names the Account Manager and Ad Specialist at steps 3 and 11.
+      // Ops raises the requirement and reviews the keywords and copy — steps
+      // 1, 7 and 9. It deliberately holds neither ASSIGN nor BUDGET: a
+      // Manager picks the people and decides the money, so the person who
+      // raised a request cannot also staff it and fund it.
       feature('AD_REQUESTS', 'APPROVE'),
-      feature('AD_REQUESTS', 'ASSIGN'),
       feature('AD_COPY', 'VIEW'),
       feature('LANDING_SCORE', 'VIEW'),
     ],
@@ -242,6 +259,10 @@ export const SEED_ROLES: SeedRole[] = [
       feature('KEYWORDS', 'EXPORT'),
       feature('AD_REQUESTS', 'VIEW'),
       feature('AD_REQUESTS', 'EDIT'),
+      // Steps 5, 12 and 13 — submitting keywords and copy, launching, and
+      // finishing. Its own action so the "Ad Specialist" picker lists the
+      // people who do the work, not everyone who can edit a brief.
+      feature('AD_REQUESTS', 'BUILD'),
       ...all('AD_COPY'),
       ...all('LANDING_SCORE'),
       feature('SYNC', 'VIEW'),

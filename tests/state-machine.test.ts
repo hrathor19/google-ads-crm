@@ -147,11 +147,85 @@ describe('the thirteen steps, in order', () => {
   });
 
   it('names the right actor for each step', () => {
+    // Ops raises it and signs off the copy; a Manager staffs it and funds it;
+    // the Specialist builds and launches.
     expect(findTransition('DRAFT', 'SUBMITTED')?.actor).toBe('OPS');
-    expect(findTransition('AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED')?.actor).toBe('OPS');
-    expect(findTransition('AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED')?.actor).toBe('AD_SPECIALIST');
+    expect(findTransition('UNDER_REVIEW', 'RECHECK_REQUESTED')?.actor).toBe('OPS');
     expect(findTransition('UNDER_REVIEW', 'REVIEW_APPROVED')?.actor).toBe('OPS');
+
+    expect(findTransition('AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED')?.actor).toBe('MANAGER');
+    expect(findTransition('REVIEW_APPROVED', 'BUDGET_APPROVED')?.actor).toBe('MANAGER');
+    expect(findTransition('BUDGET_APPROVED', 'ACCOUNT_ASSIGNED')?.actor).toBe('MANAGER');
+
+    expect(findTransition('AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED')?.actor).toBe('AD_SPECIALIST');
     expect(findTransition('ACCOUNT_ASSIGNED', 'LIVE')?.actor).toBe('AD_SPECIALIST');
+    expect(findTransition('LIVE', 'COMPLETED')?.actor).toBe('AD_SPECIALIST');
+  });
+
+  it('separates building from editing and from approving', () => {
+    // Three different jobs, three different permissions.
+    expect(findTransition('AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED')?.permission).toBe(
+      'AD_REQUESTS:BUILD'
+    );
+    expect(findTransition('ACCOUNT_ASSIGNED', 'LIVE')?.permission).toBe('AD_REQUESTS:BUILD');
+    expect(findTransition('LIVE', 'COMPLETED')?.permission).toBe('AD_REQUESTS:BUILD');
+  });
+
+  it('refuses the build steps to someone who only holds EDIT', () => {
+    const r = evaluate({
+      from: 'AWAITING_AD_SUBMISSION',
+      to: 'ADS_SUBMITTED',
+      isOwner: false,
+      isSuperAdmin: false,
+      hasPermission: (f) => f === 'AD_REQUESTS:EDIT',
+      provided: complete,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toMatch(/AD_REQUESTS:BUILD/);
+  });
+
+  it('puts the budget behind its own permission, not APPROVE', () => {
+    // Otherwise signing off the copy would also let someone commit the spend.
+    expect(findTransition('REVIEW_APPROVED', 'BUDGET_APPROVED')?.permission).toBe(
+      'AD_REQUESTS:BUDGET'
+    );
+    expect(findTransition('UNDER_REVIEW', 'REVIEW_APPROVED')?.permission).toBe(
+      'AD_REQUESTS:APPROVE'
+    );
+  });
+
+  it('refuses the budget step to someone who only holds APPROVE', () => {
+    const r = evaluate({
+      from: 'REVIEW_APPROVED',
+      to: 'BUDGET_APPROVED',
+      isOwner: false,
+      isSuperAdmin: false,
+      hasPermission: (f) => f === 'AD_REQUESTS:APPROVE',
+      provided: complete,
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.code).toBe('FORBIDDEN');
+      expect(r.message).toMatch(/AD_REQUESTS:BUDGET/);
+    }
+  });
+
+  it('refuses assignment to someone who only holds APPROVE', () => {
+    for (const [from, to] of [
+      ['AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED'],
+      ['BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'],
+    ] as Array<[AdRequestStatus, AdRequestStatus]>) {
+      const r = evaluate({
+        from,
+        to,
+        isOwner: false,
+        isSuperAdmin: false,
+        hasPermission: (f) => f === 'AD_REQUESTS:APPROVE',
+        provided: complete,
+      });
+      expect(r.ok, `${from} -> ${to}`).toBe(false);
+      if (!r.ok) expect(r.code).toBe('FORBIDDEN');
+    }
   });
 });
 
@@ -185,15 +259,15 @@ describe('the recheck loop', () => {
 });
 
 describe('requirements', () => {
-  it('will not assign an Account Manager without naming one', () => {
+  it('will not assign step 3 without naming an Ad Specialist', () => {
     const r = evaluate({
       from: 'AWAITING_AM_ASSIGNMENT',
       to: 'AM_ASSIGNED',
       ...god,
-      provided: { ...complete, accountManagerId: null },
+      provided: { ...complete, adSpecialistId: null },
     });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.message).toMatch(/Account Manager/i);
+    if (!r.ok) expect(r.message).toMatch(/Ad Specialist/i);
   });
 
   it('will not hand over the account without an Ad Specialist', () => {

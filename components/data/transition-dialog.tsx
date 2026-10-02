@@ -61,21 +61,27 @@ const STEP_CONFIG: Record<
   }
 > = {
   AM_ASSIGNED: {
-    title: 'Assign an Account Manager',
-    description: 'They will own this account from here, and be notified that it is theirs.',
+    title: 'Assign the Ad Specialist',
+    description:
+      'They build the campaign and send the keywords and ad copy back for approval.',
     assign: {
-      field: 'accountManagerId',
-      permission: 'AD_REQUESTS:VIEW',
-      label: 'Account Manager',
+      // BUILD, not VIEW or EDIT: those filled the list with managers and ops
+      // staff, who can read or edit a brief but are not the people who build
+      // campaigns. BUILD is exactly what steps 5, 12 and 13 require.
+      field: 'adSpecialistId',
+      permission: 'AD_REQUESTS:BUILD',
+      label: 'Ad Specialist',
     },
     confirmLabel: 'Assign',
   },
   ACCOUNT_ASSIGNED: {
-    title: 'Hand the account to an Ad Specialist',
-    description: 'They build the campaign and take it live.',
+    title: 'Hand over the full account',
+    description:
+      'The budget is approved. Confirm the Ad Specialist, or pick a different one, for the ' +
+      'full handover before launch.',
     assign: {
       field: 'adSpecialistId',
-      permission: 'AD_REQUESTS:EDIT',
+      permission: 'AD_REQUESTS:BUILD',
       label: 'Ad Specialist',
     },
     confirmLabel: 'Assign the account',
@@ -95,7 +101,7 @@ const STEP_CONFIG: Record<
   },
   BUDGET_APPROVED: {
     title: 'Apply the budget and CPL',
-    description: 'This is the spend the campaign will run against.',
+    description: 'This is the spend the campaign will run against. A Manager decision.',
     needsBudget: true,
     confirmLabel: 'Approve the budget',
     confirmNote: 'Check both figures. The Ad Specialist builds against them.',

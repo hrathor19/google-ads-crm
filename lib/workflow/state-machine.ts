@@ -11,7 +11,7 @@ import type { AdRequestStatus } from '@prisma/client';
  * Numbers in the comments are the steps on the flow diagram.
  */
 
-export type Actor = 'OPS' | 'ACCOUNT_MANAGER' | 'AD_SPECIALIST' | 'SYSTEM';
+export type Actor = 'OPS' | 'MANAGER' | 'ACCOUNT_MANAGER' | 'AD_SPECIALIST' | 'SYSTEM';
 
 /** What a transition needs before it is allowed to happen. */
 export type Requirement =
@@ -59,14 +59,20 @@ export const TRANSITIONS: Transition[] = [
     autoAdvanceTo: 'AWAITING_AM_ASSIGNMENT',
   },
 
-  // 3 → 4. Ops names an Account Manager; notifying them advances it.
+  // 3 → 4. A Manager hands the account to an Ad Specialist, who builds the
+  // campaign and submits keywords and copy back for approval. Not Ops: the
+  // person who raised the requirement does not also choose who staffs it.
+  //
+  // The state is still called AM_ASSIGNED because renaming an enum value
+  // Postgres has in use costs a migration for no behavioural gain; the label
+  // below and the UI both say Ad Specialist.
   {
     from: ['AWAITING_AM_ASSIGNMENT'],
     to: 'AM_ASSIGNED',
-    actor: 'OPS',
+    actor: 'MANAGER',
     permission: 'AD_REQUESTS:ASSIGN',
-    requires: ['ACCOUNT_MANAGER'],
-    label: 'assigned an Account Manager',
+    requires: ['AD_SPECIALIST'],
+    label: 'assigned the Ad Specialist',
     autoAdvanceTo: 'AWAITING_AD_SUBMISSION',
   },
 
@@ -76,7 +82,7 @@ export const TRANSITIONS: Transition[] = [
     from: ['AWAITING_AD_SUBMISSION', 'RECHECK_REQUESTED'],
     to: 'ADS_SUBMITTED',
     actor: 'AD_SPECIALIST',
-    permission: 'AD_REQUESTS:EDIT',
+    permission: 'AD_REQUESTS:BUILD',
     label: 'submitted keywords and ad copy',
     autoAdvanceTo: 'UNDER_REVIEW',
   },
@@ -100,21 +106,23 @@ export const TRANSITIONS: Transition[] = [
     label: 'approved the review',
   },
 
-  // 10. Ops applies the budget and CPL.
+  // 10. The Manager applies the budget and CPL. Its own permission, not
+  // APPROVE: Ops signs off the keywords and copy at step 9, and that is a
+  // different decision from committing the spend.
   {
     from: ['REVIEW_APPROVED'],
     to: 'BUDGET_APPROVED',
-    actor: 'OPS',
-    permission: 'AD_REQUESTS:APPROVE',
+    actor: 'MANAGER',
+    permission: 'AD_REQUESTS:BUDGET',
     requires: ['BUDGET_AND_CPL'],
     label: 'applied the budget and CPL',
   },
 
-  // 11. The account is handed to the Ad Specialist in full.
+  // 11. A Manager hands the account to an Ad Specialist in full.
   {
     from: ['BUDGET_APPROVED'],
     to: 'ACCOUNT_ASSIGNED',
-    actor: 'OPS',
+    actor: 'MANAGER',
     permission: 'AD_REQUESTS:ASSIGN',
     requires: ['AD_SPECIALIST'],
     label: 'assigned the account to the Ad Specialist',
@@ -125,7 +133,7 @@ export const TRANSITIONS: Transition[] = [
     from: ['ACCOUNT_ASSIGNED'],
     to: 'LIVE',
     actor: 'AD_SPECIALIST',
-    permission: 'AD_REQUESTS:EDIT',
+    permission: 'AD_REQUESTS:BUILD',
     requires: ['CAMPAIGN_ID'],
     label: 'launched the campaign',
   },
@@ -135,7 +143,7 @@ export const TRANSITIONS: Transition[] = [
     from: ['LIVE'],
     to: 'COMPLETED',
     actor: 'AD_SPECIALIST',
-    permission: 'AD_REQUESTS:EDIT',
+    permission: 'AD_REQUESTS:BUILD',
     label: 'completed the setup',
   },
 
@@ -154,15 +162,15 @@ export const TRANSITIONS: Transition[] = [
 /** The system steps, which advance on their own once the mail is away. */
 export const SYSTEM_STEPS: Record<string, { label: string }> = {
   AWAITING_AM_ASSIGNMENT: { label: 'sent the summary and quality report' },
-  AWAITING_AD_SUBMISSION: { label: 'notified the Account Manager' },
+  AWAITING_AD_SUBMISSION: { label: 'notified the Ad Specialist' },
   UNDER_REVIEW: { label: 'sent the review request' },
 };
 
 export const STATUS_LABELS: Record<AdRequestStatus, string> = {
   DRAFT: 'Draft',
   SUBMITTED: 'Submitted',
-  AWAITING_AM_ASSIGNMENT: 'Awaiting Account Manager',
-  AM_ASSIGNED: 'Account Manager assigned',
+  AWAITING_AM_ASSIGNMENT: 'Awaiting assignment',
+  AM_ASSIGNED: 'Ad Specialist assigned',
   AWAITING_AD_SUBMISSION: 'Awaiting ad submission',
   ADS_SUBMITTED: 'Ads submitted',
   UNDER_REVIEW: 'Under review',

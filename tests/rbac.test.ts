@@ -87,27 +87,50 @@ describe('the seeded roles', () => {
     }
   });
 
-  it('gives Manager and Operations the approval permission', () => {
-    // Operations gained it with the 13-step flow: the diagram has Ops
-    // reviewing the ads, approving the review and applying the budget —
-    // steps 7, 9 and 10 — not a manager.
+  it('lets Manager and Operations sign off the ad copy', () => {
+    // Steps 7 and 9 — the recheck and the review approval.
     const approvers = SEED_ROLES.filter(
       (r) => !r.isSuperAdmin && r.features.includes('AD_REQUESTS:APPROVE')
     );
     expect(approvers.map((r) => r.slug).sort()).toEqual(['manager', 'operations']);
   });
 
-  it('keeps assignment with Operations and Manager, away from the doers', () => {
-    // Steps 3 and 11: naming the Account Manager and handing the account to
-    // the Ad Specialist. Manager holds every AD_REQUESTS action by design;
-    // what matters is that neither the AM nor the Specialist can reassign
-    // the work to themselves.
+  it('gives only the Ads team the power to build and launch', () => {
+    // Steps 5, 12 and 13. Separate from EDIT, which Ops needs for its own
+    // drafts, so the Ad Specialist picker lists only people who do the work.
+    const builders = SEED_ROLES.filter(
+      (r) => !r.isSuperAdmin && r.features.includes('AD_REQUESTS:BUILD')
+    );
+    expect(builders.map((r) => r.slug)).toEqual(['google-ads-team']);
+
+    for (const slug of ['operations', 'manager', 'account-manager']) {
+      const role = SEED_ROLES.find((r) => r.slug === slug)!;
+      expect(role.features, `${slug} should not build`).not.toContain('AD_REQUESTS:BUILD');
+    }
+  });
+
+  it('keeps the budget away from the people who raise requests', () => {
+    // Step 10 is its own permission precisely so Ops can approve the copy
+    // without being able to commit the spend.
+    const budgetHolders = SEED_ROLES.filter(
+      (r) => !r.isSuperAdmin && r.features.includes('AD_REQUESTS:BUDGET')
+    );
+    expect(budgetHolders.map((r) => r.slug)).toEqual(['manager']);
+
+    const ops = SEED_ROLES.find((r) => r.slug === 'operations')!;
+    expect(ops.features).not.toContain('AD_REQUESTS:BUDGET');
+  });
+
+  it('gives only the Manager the power to assign people', () => {
+    // Steps 3 and 11. Ops raises the requirement; a Manager decides who
+    // staffs it. Neither the Account Manager nor the Ad Specialist can
+    // reassign the work to themselves.
     const assigners = SEED_ROLES.filter(
       (r) => !r.isSuperAdmin && r.features.includes('AD_REQUESTS:ASSIGN')
     );
-    expect(assigners.map((r) => r.slug).sort()).toEqual(['manager', 'operations']);
+    expect(assigners.map((r) => r.slug)).toEqual(['manager']);
 
-    for (const slug of ['account-manager', 'google-ads-team']) {
+    for (const slug of ['operations', 'account-manager', 'google-ads-team']) {
       const role = SEED_ROLES.find((r) => r.slug === slug)!;
       expect(role.features, `${slug} should not assign`).not.toContain('AD_REQUESTS:ASSIGN');
     }
