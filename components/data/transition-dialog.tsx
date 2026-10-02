@@ -38,6 +38,7 @@ export type TransitionPayload = {
   reason?: string;
   accountManagerId?: string;
   adSpecialistId?: string;
+  accountId?: number;
   budget?: number;
   requiredCpl?: number;
   linkedCampaignId?: string;
@@ -52,6 +53,13 @@ const STEP_CONFIG: Record<
     /** Permission the assignee must hold, when this step picks a person. */
     assign?: { field: 'accountManagerId' | 'adSpecialistId'; permission: string; label: string };
     needsReason?: boolean;
+    /**
+     * Offer the Google Ads account. The Ops requirement form does not ask for
+     * one, so unless it is named at an assignment step the request can never
+     * be matched to the synced performance data — the Assigned campaigns page
+     * would show the handover with nothing under it.
+     */
+    offersAccount?: boolean;
     needsBudget?: boolean;
     needsCampaignId?: boolean;
     confirmLabel: string;
@@ -72,6 +80,7 @@ const STEP_CONFIG: Record<
       permission: 'AD_REQUESTS:BUILD',
       label: 'Ad Specialist',
     },
+    offersAccount: true,
     confirmLabel: 'Assign',
   },
   ACCOUNT_ASSIGNED: {
@@ -84,6 +93,7 @@ const STEP_CONFIG: Record<
       permission: 'AD_REQUESTS:BUILD',
       label: 'Ad Specialist',
     },
+    offersAccount: true,
     confirmLabel: 'Assign the account',
   },
   RECHECK_REQUESTED: {
@@ -110,6 +120,11 @@ const STEP_CONFIG: Record<
     title: 'Mark the campaign live',
     description: 'Link the Google Ads campaign you created, so the two stay connected.',
     needsCampaignId: true,
+    // Also here, not only at the assignment steps: a request that reaches
+    // launch without an account has no other moment left to acquire one, and
+    // the account is what keeps the reporting working if the campaign is
+    // later rebuilt under a new ID.
+    offersAccount: true,
     confirmLabel: 'Mark live',
   },
   REVIEW_APPROVED: {
@@ -128,17 +143,27 @@ const STEP_CONFIG: Record<
 export function stepNeedsDialog(target: string): boolean {
   const c = STEP_CONFIG[target];
   if (!c) return false;
-  return Boolean(c.assign || c.needsReason || c.needsBudget || c.needsCampaignId || c.confirmNote);
+  return Boolean(
+    c.assign ||
+      c.offersAccount ||
+      c.needsReason ||
+      c.needsBudget ||
+      c.needsCampaignId ||
+      c.confirmNote
+  );
 }
 
 export function TransitionDialog({
   target,
   busy,
+  currentAccountId,
   onCancel,
   onConfirm,
 }: {
   target: string | null;
   busy: boolean;
+  /** The account already on the request, so the picker opens on it. */
+  currentAccountId?: number | null;
   onCancel: () => void;
   onConfirm: (payload: TransitionPayload) => void;
 }) {
@@ -149,16 +174,20 @@ export function TransitionDialog({
   const [budget, setBudget] = useState('');
   const [cpl, setCpl] = useState('');
   const [campaignId, setCampaignId] = useState('');
+  const [accountId, setAccountId] = useState('');
 
   // Clear between openings, so yesterday's rejection reason cannot be sent
-  // with today's approval.
+  // with today's approval. The account is the exception: it reopens on
+  // whatever the request already carries, because re-picking it on every
+  // visit is how it gets changed by accident.
   useEffect(() => {
     setReason('');
     setAssigneeId('');
     setBudget('');
     setCpl('');
     setCampaignId('');
-  }, [target]);
+    setAccountId(currentAccountId != null ? String(currentAccountId) : '');
+  }, [target, currentAccountId]);
 
   const { data: assignees, isLoading: loadingAssignees } = useApi<{
     users: Array<{ id: string; name: string; email: string; roleName: string }>;
@@ -167,6 +196,13 @@ export function TransitionDialog({
     `/api/ad-requests/assignees?permission=${encodeURIComponent(config?.assign?.permission ?? '')}`,
     { enabled: Boolean(config?.assign) }
   );
+
+  const { data: accounts, isLoading: loadingAccounts } = useApi<{
+    accounts: Array<{ id: number; name: string | null; customerId: string }>;
+  }>(['account-options'], '/api/accounts/options', {
+    enabled: Boolean(config?.offersAccount),
+    staleTime: 5 * 60_000,
+  });
 
   if (!target || !config) return null;
 
@@ -189,6 +225,7 @@ export function TransitionDialog({
       payload.budget = budgetNum;
       payload.requiredCpl = cplNum;
     }
+    if (config!.offersAccount && accountId) payload.accountId = Number(accountId);
     if (config!.needsCampaignId) payload.linkedCampaignId = campaignId.trim();
     onConfirm(payload);
   }
@@ -227,6 +264,31 @@ export function TransitionDialog({
                   first.
                 </p>
               )}
+            </div>
+          )}
+
+          {config.offersAccount && (
+            <div className="space-y-1.5">
+              <Label htmlFor="account">Google Ads account</Label>
+              <Select value={accountId} onValueChange={setAccountId}>
+                <SelectTrigger id="account">
+                  <SelectValue
+                    placeholder={loadingAccounts ? 'Loading…' : 'Choose the account'}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {(accounts?.accounts ?? []).map((a) => (
+                    <SelectItem key={a.id} value={String(a.id)}>
+                      {a.name ?? a.customerId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {config.needsCampaignId
+                  ? 'Keeps the Assigned campaigns page reporting even if the campaign is later rebuilt under a new ID.'
+                  : 'Optional, but until it is set the request has no performance to report on the Assigned campaigns page.'}
+              </p>
             </div>
           )}
 

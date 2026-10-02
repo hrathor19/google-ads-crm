@@ -75,6 +75,7 @@ type RequestDetail = {
   linkedCampaignId: string | null;
   decisionReason: string | null;
   createdAt: string;
+  accountId: number | null;
   accountName: string | null;
   createdBy: { id: string; name: string; email: string };
   assignedTo: { id: string; name: string; email: string } | null;
@@ -716,6 +717,7 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       <TransitionDialog
         target={pendingTransition}
         busy={busy}
+        currentAccountId={data.request.accountId}
         onCancel={() => setPendingTransition(null)}
         onConfirm={(payload) => runTransition(pendingTransition!, payload)}
       />

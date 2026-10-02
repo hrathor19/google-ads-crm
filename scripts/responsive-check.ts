@@ -33,11 +33,13 @@ const PAGES = [
   '/dashboard/analytics',
   '/dashboard/ad-requests',
   '/dashboard/ad-requests/new',
+  '/dashboard/assigned',
   '/dashboard/ad-copy',
   '/dashboard/landing-score',
   '/dashboard/admin/users',
   '/dashboard/admin/roles',
   '/dashboard/admin/audit',
+  '/dashboard/admin/email',
   '/dashboard/admin/integrations',
 ];
 
@@ -169,14 +171,19 @@ async function main() {
               return !labelled;
             }).length;
 
-          // Icon-only buttons with no accessible name at all.
+          // Icon-only buttons with no accessible name at all. A `<label for>`
+          // pointing at the control counts: that is how a Switch with a
+          // visible caption gets its name, and flagging it sent us looking
+          // for a bug in a component that was already labelled.
           const namelessButtons = Array.from(
             document.querySelectorAll<HTMLElement>('button')
           ).filter(
             (b) =>
               !b.textContent?.trim() &&
               !b.getAttribute('aria-label') &&
-              !b.querySelector('.sr-only')
+              !b.getAttribute('aria-labelledby') &&
+              !b.querySelector('.sr-only') &&
+              !(b.id && document.querySelector(`label[for="${CSS.escape(b.id)}"]`))
           ).length;
 
           const hasH1 = Boolean(document.querySelector('h1'));

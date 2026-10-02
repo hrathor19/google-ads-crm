@@ -188,6 +188,13 @@ export const transitionSchema = z.object({
   /** Step 3 and step 11 respectively. */
   accountManagerId: z.string().cuid().nullable().optional(),
   adSpecialistId: z.string().cuid().nullable().optional(),
+  /**
+   * The Google Ads account the work lands in, named at the assignment steps.
+   * The Ops requirement form no longer asks for it — the Manager is the one
+   * who knows — and without it the request can never be measured against the
+   * synced performance data.
+   */
+  accountId: z.coerce.number().int().positive().nullable().optional(),
   /** Step 10. */
   budget: z.coerce.number().positive().max(1_000_000_000).nullable().optional(),
   requiredCpl: z.coerce.number().positive().max(10_000_000).nullable().optional(),

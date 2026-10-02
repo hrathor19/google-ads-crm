@@ -1,5 +1,10 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // `next dev` and `next build` both write into `.next`, so building while the
+  // dev server is up makes the build read half-written manifests and fail with
+  // "Cannot find module for page". Setting this lets a verification build run
+  // beside a live dev server without disturbing it.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   experimental: {
     serverActions: {
       allowedOrigins: ['localhost:3000'],

@@ -22,6 +22,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       reason: body.reason ?? null,
       accountManagerId: body.accountManagerId ?? null,
       adSpecialistId: body.adSpecialistId ?? null,
+      accountId: body.accountId ?? null,
       budget: body.budget ?? null,
       requiredCpl: body.requiredCpl ?? null,
       // Goes *into* the transition, not after it: going live requires the

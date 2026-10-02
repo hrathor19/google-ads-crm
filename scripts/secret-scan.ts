@@ -52,6 +52,29 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
 /** Values shorter than this match too much to mean anything. */
 const MIN_LENGTH = 8;
 
+/**
+ * Runs that turn up in ordinary bundle content.
+ *
+ * nanoid ships the alphabet `…-0123456789ABCDEF…` and React's polyfill checks
+ * `"0123456789"`, so a secret that is a slice of one of these is found in
+ * every build whether or not anything leaked. Substring matching cannot
+ * answer the question for such a value, and reporting it as a leak would
+ * train people to ignore this check.
+ */
+const COMMON_RUNS = [
+  '0123456789',
+  'abcdefghijklmnopqrstuvwxyz',
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+  'qwertyuiopasdfghjklzxcvbnm',
+];
+
+/** Whether a value is indistinguishable from incidental bundle text. */
+function isUnscannable(value: string): boolean {
+  if (/^(.)\1*$/.test(value)) return true;
+  const reversed = (t: string) => t.split('').reverse().join('');
+  return COMMON_RUNS.some((run) => run.includes(value) || reversed(run).includes(value));
+}
+
 function parseEnv(path: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const raw of readFileSync(path, 'utf8').split('\n')) {
@@ -85,19 +108,21 @@ function walk(dir: string): string[] {
 function main() {
   const root = process.cwd();
   const envPath = resolve(root, '.env');
-  const bundleDir = resolve(root, '.next/static');
+  // Honours NEXT_DIST_DIR so the scan can target a build made beside a
+  // running dev server, whose own `.next/static` is a dev bundle.
+  const bundleDir = resolve(root, `${process.env.NEXT_DIST_DIR || '.next'}/static`);
 
   if (!existsSync(envPath)) {
     console.error('No .env to check against.');
     process.exit(1);
   }
   if (!existsSync(bundleDir)) {
-    console.error('No .next/static — run `npm run build` first.');
+    console.error(`No ${bundleDir} — run \`npm run build\` first.`);
     process.exit(1);
   }
 
   if (existsSync(join(bundleDir, 'development'))) {
-    console.error('.next/static holds a dev build (a `development` directory is present).');
+    console.error(`${bundleDir} holds a dev build (a \`development\` directory is present).`);
     console.error('Stop `next dev`, run `npm run build`, then re-run this check —');
     console.error('a dev bundle is not what ships, so scanning it proves nothing.');
     process.exit(1);
@@ -107,12 +132,17 @@ function main() {
   const bundle = walk(bundleDir).map((f) => readFileSync(f, 'utf8'));
 
   const leaked: string[] = [];
+  const unscannable: string[] = [];
   let checked = 0;
   let skipped = 0;
 
   for (const [key, value] of Array.from(env.entries())) {
     if (key.startsWith('NEXT_PUBLIC_') || key in PUBLIC_BY_DESIGN || value.length < MIN_LENGTH) {
       skipped += 1;
+      continue;
+    }
+    if (isUnscannable(value)) {
+      unscannable.push(key);
       continue;
     }
     checked += 1;
@@ -123,6 +153,14 @@ function main() {
 
   console.log(`Scanned ${bundle.length} client file(s) for ${checked} secret value(s).`);
   console.log(`${skipped} skipped as public by design or too short to be meaningful.`);
+
+  if (unscannable.length) {
+    console.warn(`\n${unscannable.length} value(s) could not be checked:`);
+    for (const key of unscannable) console.warn(`  - ${key}`);
+    console.warn('Each is a sequential or repeated run, which appears in ordinary bundle');
+    console.warn('content, so a match would prove nothing. Set a stronger value to make it');
+    console.warn('checkable — and because a guessable one is a problem in its own right.');
+  }
 
   if (leaked.length) {
     console.error(`\n${leaked.length} secret(s) reached the client bundle:`);

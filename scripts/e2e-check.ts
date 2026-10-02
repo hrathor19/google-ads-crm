@@ -474,11 +474,49 @@ async function main() {
   );
   check('The Manager applies the budget and CPL', budgetApproved.status === 200 && budgetApproved.body.status === 'BUDGET_APPROVED');
 
+  // The handover names the Google Ads account as well as the person: the Ops
+  // requirement form no longer asks for one, so this is the only point at
+  // which the request becomes measurable against the synced data.
+  const liveAccount = await prisma.campaigns.groupBy({
+    by: ['account_id'],
+    _count: { _all: true },
+    orderBy: { _count: { account_id: 'desc' } },
+    take: 1,
+  });
+  const accountId = liveAccount[0]?.account_id ?? null;
+
+  const ghostAccount = await managerSession.json<{ error: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ target: 'ACCOUNT_ASSIGNED', adSpecialistId: adsTeam.id, accountId: 2_000_000_000 }),
+    }
+  );
+  check(
+    'Handing over an account that does not exist is refused',
+    ghostAccount.status === 400,
+    ghostAccount.body?.error
+  );
+
   const accountAssigned = await managerSession.json<{ status: string }>(
     `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'ACCOUNT_ASSIGNED', adSpecialistId: adsTeam.id }) }
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        target: 'ACCOUNT_ASSIGNED',
+        adSpecialistId: adsTeam.id,
+        ...(accountId === null ? {} : { accountId }),
+      }),
+    }
   );
   check('The Manager assigns the Ad Specialist', accountAssigned.status === 200 && accountAssigned.body.status === 'ACCOUNT_ASSIGNED');
+  if (accountId !== null) {
+    const withAccount = await prisma.crmAdRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: { accountId: true },
+    });
+    check('The Google Ads account is recorded on the request', withAccount.accountId === accountId, `got ${withAccount.accountId}`);
+  }
 
   const specialistQueue = await adsSession.json<{ rows: Array<{ id: string }> }>(
     '/api/ad-requests?status=AWAITING_AD_SUBMISSION,RECHECK_REQUESTED,ACCOUNT_ASSIGNED,LIVE'
@@ -568,6 +606,118 @@ async function main() {
   check('The copy version is attached', detail.body.request.adCopyVersions.length === 1);
   check('The landing score is attached', detail.body.request.landingScores.length === 1);
 
+  console.log('\n── Assigned campaign performance ──');
+
+  const mgrAssigned = await managerSession.json<{
+    canSeeAll: boolean;
+    canSeeMoney: boolean;
+    onlyMine: boolean;
+    assignments: Array<{
+      id: string;
+      specialistName: string | null;
+      requiredCpl: number | null;
+      pacing: string | null;
+    }>;
+    specialists: Array<{ id: string; name: string }>;
+  }>('/api/assigned-campaigns?days=30');
+  check(
+    'The Manager sees everybody\'s assignments',
+    mgrAssigned.status === 200 && mgrAssigned.body.canSeeAll === true,
+    `got ${mgrAssigned.status}`
+  );
+  const mgrRow = mgrAssigned.body.assignments?.find((a) => a.id === requestId);
+  check(
+    'The assigned request appears on the performance page',
+    Boolean(mgrRow),
+    `${mgrAssigned.body.assignments?.length ?? 0} row(s)`
+  );
+  check(
+    'It carries the CPL the Manager approved at step 10',
+    mgrRow?.requiredCpl === 2500,
+    `got ${mgrRow?.requiredCpl}`
+  );
+  check(
+    'Every row has an Ad Specialist on it',
+    (mgrAssigned.body.assignments ?? []).every((a) => a.specialistName !== null)
+  );
+  check(
+    'The specialist picker is built from the rows in view',
+    (mgrAssigned.body.specialists ?? []).some((s) => s.id === adsTeam.id)
+  );
+
+  // The request went live against a made-up campaign ID, so the linked-campaign
+  // rule finds nothing and the account rule is what has to carry it.
+  const mgrCampaigns = await managerSession.json<{
+    assignments: Array<{ id: string; campaignCount: number; cost: number | null }>;
+    campaigns: Array<{ id: number }>;
+    totals: { campaigns: number };
+  }>(`/api/assigned-campaigns?days=90&specialistId=${adsTeam.id}`);
+  const specialistRow = mgrCampaigns.body.assignments?.find((a) => a.id === requestId);
+  check(
+    'Filtering by Ad Specialist narrows to their rows',
+    mgrCampaigns.status === 200 && Boolean(specialistRow),
+    `${mgrCampaigns.body.assignments?.length ?? 0} row(s)`
+  );
+  check(
+    'The campaign view is built from the same assignments as the tiles',
+    mgrCampaigns.body.campaigns.length === mgrCampaigns.body.totals.campaigns,
+    `${mgrCampaigns.body.campaigns.length} vs ${mgrCampaigns.body.totals.campaigns}`
+  );
+  if (accountId !== null) {
+    // The request went live against a made-up campaign ID. The account it was
+    // handed over with is what has to carry the reporting.
+    check(
+      'An unresolvable campaign link falls back to the handed-over account',
+      (specialistRow?.campaignCount ?? 0) > 0,
+      `${specialistRow?.campaignCount ?? 0} campaign(s)`
+    );
+  }
+
+  const adsAssigned = await adsSession.json<{
+    canSeeAll: boolean;
+    onlyMine: boolean;
+    assignments: Array<{ id: string }>;
+  }>('/api/assigned-campaigns?days=30');
+  check(
+    'The Ad Specialist sees their own assignment, scoped to themselves',
+    adsAssigned.status === 200 &&
+      adsAssigned.body.canSeeAll === false &&
+      adsAssigned.body.onlyMine === true &&
+      adsAssigned.body.assignments.some((a) => a.id === requestId),
+    `got ${adsAssigned.status}, ${adsAssigned.body?.assignments?.length ?? 0} row(s)`
+  );
+
+  const opsAssigned = await opsSession.json<{
+    canSeeMoney: boolean;
+    assignments: Array<{ id: string; cost: number | null; requiredCpl: number | null; pacing: string | null }>;
+    totals: { cost: number | null };
+  }>('/api/assigned-campaigns?days=30');
+  const opsRow = opsAssigned.body.assignments?.find((a) => a.id === requestId);
+  check(
+    'Operations sees the request it raised',
+    Boolean(opsRow),
+    `${opsAssigned.body.assignments?.length ?? 0} row(s)`
+  );
+  check(
+    '…but with no spend, no CPL target and no pacing verdict',
+    opsAssigned.body.canSeeMoney === false &&
+      opsAssigned.body.totals.cost === null &&
+      Boolean(opsRow) &&
+      opsRow!.cost === null &&
+      opsRow!.requiredCpl === null &&
+      opsRow!.pacing === null,
+    `cost=${opsRow?.cost}, cpl=${opsRow?.requiredCpl}, pacing=${opsRow?.pacing}`
+  );
+
+  // The verdict is as financial as the figures behind it: "over CPL" would
+  // hand back exactly what the redaction above withheld.
+  const opsPacing = await opsSession.json('/api/assigned-campaigns?days=30&pacing=OVER_CPL');
+  check(
+    'Operations cannot filter by CPL pacing either',
+    opsPacing.status === 403,
+    `got ${opsPacing.status}`
+  );
+
   console.log('\n── Custom role: create, toggle, assign, verify ──');
 
   const admin = new Session();
@@ -606,6 +756,22 @@ async function main() {
 
     const denied = await scoped.json('/api/keywords?days=7');
     check('The custom role is refused what it was not granted', denied.status === 403, `got ${denied.status}`);
+
+    // Assigned campaign performance joins two modules, and the endpoint
+    // demands both. Granting only the workflow half must not open the
+    // campaign half.
+    await admin.json(`/api/admin/roles/${roleId}/permissions`, {
+      method: 'PUT',
+      body: JSON.stringify({ feature: 'AD_REQUESTS:VIEW', allowed: true }),
+    });
+    const flowOnly = await scoped.json('/api/ad-requests?limit=1');
+    check('AD_REQUESTS:VIEW alone opens the request list', flowOnly.status === 200, `got ${flowOnly.status}`);
+    const halfGranted = await scoped.json('/api/assigned-campaigns?days=7');
+    check(
+      'AD_REQUESTS:VIEW alone does not open campaign performance',
+      halfGranted.status === 403,
+      `got ${halfGranted.status}`
+    );
 
     const revoke = await admin.json(`/api/admin/roles/${roleId}/permissions`, {
       method: 'PUT',

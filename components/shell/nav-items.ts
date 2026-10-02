@@ -15,6 +15,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  Target,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -31,6 +32,12 @@ export type NavItem = {
   icon: LucideIcon;
   /** Any one of these grants the item. */
   requires: Array<[string, Action]>;
+  /**
+   * Every one of these is also needed. For a page that joins two modules —
+   * assigned campaigns reads both the request flow and campaign performance —
+   * the API refuses without both, so the menu must not promise otherwise.
+   */
+  requiresAll?: Array<[string, Action]>;
   /** Exact match only — stops the dashboard root highlighting on every page. */
   exact?: boolean;
 };
@@ -73,6 +80,13 @@ export const NAV_SECTIONS: NavSection[] = [
         label: 'Ad requests',
         icon: ClipboardList,
         requires: [['AD_REQUESTS', 'VIEW']],
+      },
+      {
+        href: '/dashboard/assigned',
+        label: 'Assigned campaigns',
+        icon: Target,
+        requires: [['AD_REQUESTS', 'VIEW']],
+        requiresAll: [['CAMPAIGNS', 'VIEW']],
       },
       {
         href: '/dashboard/ad-copy',

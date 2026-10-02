@@ -34,7 +34,7 @@ export function Sidebar({
   onClose?: () => void;
 }) {
   const pathname = usePathname();
-  const { canAny, user } = usePermissions();
+  const { can, canAny, user } = usePermissions();
   const [hovered, setHovered] = useState(false);
 
   // Collapsed, but hovered, reads as expanded — without changing the layout
@@ -43,7 +43,10 @@ export function Sidebar({
 
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter((item) => canAny(...item.requires)),
+    items: section.items.filter(
+      (item) =>
+        canAny(...item.requires) && (item.requiresAll ?? []).every(([m, a]) => can(m, a))
+    ),
   })).filter((section) => section.items.length > 0);
 
   return (

@@ -8,6 +8,8 @@
 
 # next.js
 /.next/
+# A verification build made beside a running dev server (NEXT_DIST_DIR).
+/.next-build/
 /out/
 next-env.d.ts
 tsconfig.tsbuildinfo

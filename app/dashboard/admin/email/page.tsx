@@ -187,6 +187,9 @@ export default function EmailSettingsPage() {
                   </Label>
                   <Switch
                     id="enabled"
+                    // The visible caption reads "Enabled"/"Disabled", which is
+                    // the state, not the name of the control.
+                    aria-label="Send transactional email"
                     checked={settings.enabled}
                     onCheckedChange={(v) => set('enabled', v)}
                   />

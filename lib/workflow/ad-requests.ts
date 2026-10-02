@@ -10,7 +10,7 @@ import { logAudit } from '@/lib/audit';
 import { notify, usersWithPermission } from '@/lib/notifications';
 import { ApiError, badRequest, conflict, forbidden, notFound } from '@/lib/api';
 import type { Principal } from '@/lib/rbac/permissions';
-import { hasPermission } from '@/lib/rbac/permissions';
+import { canAccessAccount, hasPermission } from '@/lib/rbac/permissions';
 import {
   SPECIALIST_QUEUE,
   STATUS_LABELS,
@@ -223,6 +223,8 @@ export type TransitionOptions = {
   /** Step 3 and step 11: who owns this next. */
   accountManagerId?: string | null;
   adSpecialistId?: string | null;
+  /** The Google Ads account handed over with them. */
+  accountId?: number | null;
   /** Step 10. */
   budget?: number | null;
   requiredCpl?: number | null;
@@ -298,6 +300,20 @@ export async function transition(
     throw badRequest(verdict.message);
   }
 
+  // Naming an account is how the request becomes measurable, so it is also a
+  // way to point a request at an account the actor cannot see. Check both
+  // that it exists and that it is theirs before it is written.
+  if (opts.accountId != null) {
+    if (!canAccessAccount(principal, opts.accountId)) {
+      throw forbidden('That account is not in your assigned scope.');
+    }
+    const account = await prisma.accounts.findUnique({
+      where: { id: opts.accountId },
+      select: { id: true },
+    });
+    if (!account) throw badRequest('That Google Ads account no longer exists.');
+  }
+
   const reason = (opts.reason ?? '').trim();
   const now = new Date();
 
@@ -325,6 +341,7 @@ export async function transition(
       data.adSpecialistId = opts.adSpecialistId;
       data.assignedToId = opts.adSpecialistId;
     }
+    if (opts.accountId != null) data.accountId = opts.accountId;
     if (opts.budget != null) data.budget = opts.budget;
     if (opts.requiredCpl != null) data.requiredCpl = opts.requiredCpl;
     if (opts.linkedCampaignId) data.linkedCampaignId = opts.linkedCampaignId;
