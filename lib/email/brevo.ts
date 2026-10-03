@@ -49,6 +49,12 @@ export class EmailSendError extends Error {
   }
 }
 
+/** The last four characters of the key, to match against Brevo's key list. */
+function keySuffix(): string {
+  const key = env.email().brevoApiKey.trim();
+  return key.length >= 4 ? `…${key.slice(-4)}` : '(not set)';
+}
+
 export function brevoConfigured(): boolean {
   return Boolean(env.email().brevoApiKey);
 }
@@ -75,7 +81,13 @@ function describeError(status: number, body: string): EmailSendError {
       status,
       `The API key is valid but restricted. Authorise ${ip} at ` +
         'https://app.brevo.com/security/authorised_ips, or remove the ' +
-        'restriction. A deployed server needs its own address added too.'
+        'restriction. A deployed server needs its own address added too. ' +
+        // The failure that looks identical to a missing entry: authorising
+        // the address in a *different* Brevo account. The allowlist belongs
+        // to the account that issued the key, so matching the suffix against
+        // Brevo's key list is the one check that tells them apart. Four
+        // trailing characters is what Brevo's own UI shows.
+        `Check you are in the account that issued this key — it ends ${keySuffix()}.`
     );
   }
   if (status === 401) {
