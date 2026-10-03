@@ -1,0 +1,2 @@
+-- Rollback: the previous values are not recorded anywhere, so this cannot be
+-- reversed exactly. Reconfigure the affected routes on the Email page.

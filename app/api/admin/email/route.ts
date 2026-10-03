@@ -71,7 +71,7 @@ const settingsSchema = z.object({
       z.object({
         event: z.string(),
         enabled: z.boolean(),
-        audience: z.enum(['ROLE', 'REQUESTER', 'ASSIGNEE', 'FIXED']),
+        audience: z.enum(['ROLE', 'REQUESTER', 'ASSIGNEE', 'AD_SPECIALIST', 'FIXED']),
         audiencePermission: z.string().trim().max(100).nullable().optional(),
         toEmails: addressList,
         cc: addressList,
@@ -90,11 +90,17 @@ export async function GET() {
     const connection = await testBrevoConnection();
     return {
       settings,
-      routes: routes.sort(
-        (a, b) =>
-          EMAIL_EVENTS.findIndex((e) => e.event === a.event) -
-          EMAIL_EVENTS.findIndex((e) => e.event === b.event)
-      ),
+      // Filtered to the catalogue, not just sorted by it: a route row for a
+      // retired event would otherwise render as a bare enum name with no
+      // description, and an operator could configure something that nothing
+      // fires.
+      routes: routes
+        .filter((r) => EMAIL_EVENTS.some((e) => e.event === r.event))
+        .sort(
+          (a, b) =>
+            EMAIL_EVENTS.findIndex((e) => e.event === a.event) -
+            EMAIL_EVENTS.findIndex((e) => e.event === b.event)
+        ),
       events: EMAIL_EVENTS,
       connection,
     };

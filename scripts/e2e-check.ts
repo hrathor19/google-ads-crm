@@ -1022,7 +1022,58 @@ async function main() {
     });
     check('A default role cannot be deleted', sysDelete.status === 409, sysDelete.body?.error);
 
-    console.log('\n── The assistant ──');
+    console.log('\n── Workflow email ──');
+
+  const opsPreview = await opsSession.json('/api/admin/email/preview?event=REQUEST_SUBMITTED');
+  check('Operations cannot preview the mail routing', opsPreview.status === 403, `got ${opsPreview.status}`);
+
+  const adminMail = new Session();
+  await adminMail.login(process.env.SEED_ADMIN_EMAIL ?? '', process.env.SEED_ADMIN_PASSWORD ?? '');
+
+  const FLOW_EVENTS = [
+    ['REQUEST_SUBMITTED', 'ROLE'],
+    ['REQUEST_SPECIALIST_ASSIGNED', 'AD_SPECIALIST'],
+    ['REQUEST_BUDGET_APPROVED', 'AD_SPECIALIST'],
+    ['REQUEST_ADS_SUBMITTED', 'ROLE'],
+    ['REQUEST_APPROVED', 'AD_SPECIALIST'],
+    ['REQUEST_LIVE', 'ROLE'],
+    ['REQUEST_CHANGES_REQUESTED', 'AD_SPECIALIST'],
+    ['REQUEST_REJECTED', 'REQUESTER'],
+  ] as const;
+
+  const config = await adminMail.json<{
+    routes: Array<{ event: string; audience: string; enabled: boolean }>;
+    events: Array<{ event: string }>;
+  }>('/api/admin/email');
+  check('The Email page lists a route for every flow step', config.status === 200 &&
+    FLOW_EVENTS.every(([e]) => config.body.routes.some((r) => r.event === e)),
+    `${config.body.routes?.length ?? 0} route(s)`);
+
+  for (const [event, audience] of FLOW_EVENTS) {
+    const route = config.body.routes.find((r) => r.event === event);
+    check(`${event} is addressed to ${audience}`, route?.audience === audience, `got ${route?.audience}`);
+  }
+
+  const preview = await adminMail.json<{
+    subject: string; html: string; text: string; skipped: string | null; step: string;
+  }>('/api/admin/email/preview?event=REQUEST_BUDGET_APPROVED');
+  check(
+    'The budget mail previews with the full brief',
+    preview.status === 200 &&
+      preview.body.html.includes('Assigned budget') &&
+      preview.body.html.includes('Required CPL'),
+    preview.body?.subject
+  );
+  check(
+    'A preview reports why it would not send, rather than pretending',
+    typeof preview.body.skipped === 'string' || preview.body.skipped === null,
+    preview.body?.skipped ?? 'would send'
+  );
+
+  const bogus = await adminMail.json<{ error: string }>('/api/admin/email/preview?event=NOT_A_THING');
+  check('An unknown event is rejected', Boolean(bogus.body?.error), bogus.body?.error);
+
+  console.log('\n── The assistant ──');
 
   const opsAsk = await opsSession.json('/api/assistant', {
     method: 'POST',

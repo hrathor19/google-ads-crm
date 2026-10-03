@@ -793,6 +793,8 @@ enum CrmEmailAudience {
   REQUESTER
   /// The person the request is assigned to.
   ASSIGNEE
+  /// The Ad Specialist named on this request, and nobody else holding BUILD.
+  AD_SPECIALIST
   /// Only the fixed To addresses configured on the route.
   FIXED
 }
@@ -899,6 +901,13 @@ enum CrmNotificationType {
   REQUEST_ASSIGNED
   REQUEST_COMMENTED
   REQUEST_STATUS_CHANGED
+
+  // The 13-step flow's own moments. The generic values above predate it and
+  // are kept for the rows that use them.
+  REQUEST_SPECIALIST_ASSIGNED
+  REQUEST_BUDGET_APPROVED
+  REQUEST_ADS_SUBMITTED
+  REQUEST_LIVE
 }
 
 enum CrmAuditAction {

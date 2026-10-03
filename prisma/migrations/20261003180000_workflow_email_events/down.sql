@@ -1,0 +1,3 @@
+-- Rollback: Postgres cannot drop an enum value in place.
+-- Recreating the types is destructive and is not worth automating; leave the
+-- values in place, or rebuild the enums by hand.

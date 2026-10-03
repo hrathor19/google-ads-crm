@@ -126,6 +126,12 @@ export const env = {
     brevoApiKey: str('BREVO_API_KEY'),
     /** Seeds the From address the first time the settings row is created. */
     defaultFrom: str('EMAIL_FROM'),
+    /**
+     * Where a mail's "Open the request" button points. A mail is read away
+     * from the app, so a relative link is useless; without this the button
+     * is left out rather than rendered broken.
+     */
+    publicBaseUrl: str('PUBLIC_BASE_URL') || str('NEXTAUTH_URL'),
   }),
 
   landingPage: () => ({

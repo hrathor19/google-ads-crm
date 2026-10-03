@@ -8,6 +8,7 @@ import {
 import { prisma } from '@/lib/prisma';
 import { logAudit } from '@/lib/audit';
 import { notify, usersWithPermission } from '@/lib/notifications';
+import { mailForTransition } from '@/lib/email/workflow-mail';
 import { ApiError, badRequest, conflict, forbidden, notFound } from '@/lib/api';
 import type { Principal } from '@/lib/rbac/permissions';
 import { canAccessAccount, hasPermission } from '@/lib/rbac/permissions';
@@ -710,6 +711,18 @@ export async function transition(
   });
 
   await notifyForTransition(principal, request, target, reason);
+
+  // Mailed after the commit, deliberately. The transition is done; Brevo
+  // being slow or down must not roll it back, and `mailForTransition`
+  // swallows its own failures for the same reason. The review round is
+  // passed so three rechecks send three mails rather than one.
+  await mailForTransition({
+    requestId,
+    target,
+    actorEmail: principal.email,
+    reason,
+    round: request.reviewRound,
+  });
 
   const auditAction =
     target === 'SUBMITTED'

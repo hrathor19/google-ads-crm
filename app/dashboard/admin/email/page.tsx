@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 type Route = {
   event: string;
   enabled: boolean;
-  audience: 'ROLE' | 'REQUESTER' | 'ASSIGNEE' | 'FIXED';
+  audience: 'ROLE' | 'REQUESTER' | 'ASSIGNEE' | 'AD_SPECIALIST' | 'FIXED';
   audiencePermission: string | null;
   toEmails: string | null;
   cc: string | null;
@@ -49,13 +49,14 @@ type Settings = {
 type Payload = {
   settings: Settings;
   routes: Route[];
-  events: Array<{ event: string; label: string; description: string }>;
+  events: Array<{ event: string; label: string; description: string; step?: string }>;
   connection: { ok: boolean; detail: string };
 };
 
 const AUDIENCE_LABELS: Record<Route['audience'], string> = {
   ROLE: 'Everyone with a permission',
   REQUESTER: 'The person who raised it',
+  AD_SPECIALIST: 'The Ad Specialist on this request',
   ASSIGNEE: 'The person it is assigned to',
   FIXED: 'Only the addresses below',
 };
@@ -313,8 +314,15 @@ export default function EmailSettingsPage() {
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium">{meta?.label ?? r.event}</p>
-                        <p className="text-xs text-muted-foreground">{meta?.description}</p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium">{meta?.label ?? r.event}</p>
+                          {meta?.step && (
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                              {meta.step}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{meta?.description}</p>
                       </div>
                       <Switch
                         checked={r.enabled}

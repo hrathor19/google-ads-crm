@@ -1,5 +1,5 @@
 import 'server-only';
-import type { CrmNotificationType } from '@prisma/client';
+import type { CrmEmailAudience, CrmNotificationType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import type { Address } from './brevo';
@@ -17,60 +17,110 @@ export const EMAIL_EVENTS: Array<{
   event: CrmNotificationType;
   label: string;
   description: string;
-  /** Sensible default audience for a fresh install. */
-  defaultPermission: string;
+  /** Which step of the 13-step flow fires it, for the settings page. */
+  step: string;
+  /** Sensible default for a fresh install. */
+  defaultAudience: CrmEmailAudience;
+  defaultPermission: string | null;
   defaultSubject: string;
 }> = [
   {
     event: 'REQUEST_SUBMITTED',
-    label: 'Requirement submitted',
-    description: 'Ops has sent a new ad requirement for approval.',
+    label: '1. Requirement raised',
+    description:
+      'Operations submitted a new ad requirement. The full brief goes out with Budget and CPL blank — nobody has set them yet.',
+    step: 'Step 1',
+    // Whoever staffs the work, not whoever can approve: this mail exists to
+    // get a Manager to assign somebody.
+    defaultAudience: 'ROLE',
+    defaultPermission: 'AD_REQUESTS:ASSIGN',
+    defaultSubject: '{{title}} — new ad requirement raised',
+  },
+  {
+    event: 'REQUEST_SPECIALIST_ASSIGNED',
+    label: '2a. Ad Specialist assigned',
+    description:
+      'A Manager put somebody on it. Goes to that one person — not everyone who could have been picked.',
+    step: 'Step 3',
+    defaultAudience: 'AD_SPECIALIST',
+    defaultPermission: null,
+    defaultSubject: '{{title}} — assigned to you',
+  },
+  {
+    event: 'REQUEST_BUDGET_APPROVED',
+    label: '2b. Budget and CPL set',
+    description:
+      'The Manager approved the spend. The same brief again, now carrying the Budget and Required CPL — this is the one to build against.',
+    step: 'Step 10',
+    defaultAudience: 'AD_SPECIALIST',
+    defaultPermission: null,
+    defaultSubject: '{{title}} — budget and CPL approved',
+  },
+  {
+    event: 'REQUEST_ADS_SUBMITTED',
+    label: '3. Keywords and ad copy submitted',
+    description:
+      'The Ad Specialist sent the keywords and copy back for review. Goes to whoever reviews them.',
+    step: 'Step 5',
+    defaultAudience: 'ROLE',
     defaultPermission: 'AD_REQUESTS:APPROVE',
-    defaultSubject: '{{title}} — new ad requirement awaiting approval',
+    defaultSubject: '{{title}} — keywords and ad copy ready for review',
   },
   {
     event: 'REQUEST_APPROVED',
-    label: 'Request approved',
-    description: 'A manager approved the requirement; it moves to the Ads team.',
-    defaultPermission: 'AD_REQUESTS:EDIT',
-    defaultSubject: '{{title}} — approved, ready to build',
+    label: '4. Review approved',
+    description: 'The review passed. The Ad Specialist can proceed.',
+    step: 'Step 9',
+    defaultAudience: 'AD_SPECIALIST',
+    defaultPermission: null,
+    defaultSubject: '{{title}} — review approved',
+  },
+  {
+    event: 'REQUEST_LIVE',
+    label: '5. Campaign live',
+    description: 'The campaigns are running. Goes to everyone who has been following the request.',
+    step: 'Step 12',
+    defaultAudience: 'ROLE',
+    defaultPermission: 'AD_REQUESTS:VIEW',
+    defaultSubject: '{{title}} — live',
+  },
+
+  // ── The review mails. Both carry the remark that was typed, which is the
+  // entire point of sending them. ──
+  {
+    event: 'REQUEST_CHANGES_REQUESTED',
+    label: 'Recheck requested',
+    description:
+      'The review sent it back. The remark is quoted in the mail, so the Ad Specialist knows what to change without opening anything.',
+    step: 'Step 7',
+    defaultAudience: 'AD_SPECIALIST',
+    defaultPermission: null,
+    defaultSubject: '{{title}} — recheck requested',
   },
   {
     event: 'REQUEST_REJECTED',
     label: 'Request rejected',
-    description: 'A manager rejected the requirement, with a reason.',
-    defaultPermission: 'AD_REQUESTS:CREATE',
+    description: 'The requirement was stopped. Goes back to whoever raised it, with the reason.',
+    step: 'Off-ramp',
+    defaultAudience: 'REQUESTER',
+    defaultPermission: null,
     defaultSubject: '{{title}} — rejected',
   },
-  {
-    event: 'REQUEST_CHANGES_REQUESTED',
-    label: 'Changes requested',
-    description: 'Sent back for a recheck, with remarks.',
-    defaultPermission: 'AD_REQUESTS:CREATE',
-    defaultSubject: '{{title}} — changes requested',
-  },
-  {
-    event: 'REQUEST_ASSIGNED',
-    label: 'Assigned',
-    description: 'The request was assigned to someone.',
-    defaultPermission: 'AD_REQUESTS:EDIT',
-    defaultSubject: '{{title}} — assigned to you',
-  },
+
+  // ── Retained. Not part of the five, and off by default. ──
   {
     event: 'REQUEST_COMMENTED',
     label: 'Comment added',
-    description: 'Someone commented on the request.',
+    description: 'Someone commented on a request. Off by default — it is chatty.',
+    step: 'Any',
+    defaultAudience: 'ROLE',
     defaultPermission: 'AD_REQUESTS:VIEW',
     defaultSubject: '{{title}} — new comment',
   },
-  {
-    event: 'REQUEST_STATUS_CHANGED',
-    label: 'Status changed',
-    description: 'Any other move through the pipeline — ready, live, completed.',
-    defaultPermission: 'AD_REQUESTS:VIEW',
-    defaultSubject: '{{title}} — now {{status}}',
-  },
 ];
+
+/** Events switched off until somebody turns them on. */
+const OFF_BY_DEFAULT = new Set<CrmNotificationType>(['REQUEST_COMMENTED']);
 
 export type EmailSettings = {
   enabled: boolean;
@@ -113,10 +163,13 @@ export async function getEmailRoutes() {
 
   if (missing.length) {
     await prisma.crmEmailRoute.createMany({
+      // Each event brings its own default audience. Defaulting everything to
+      // ROLE would have mailed the assignment to every Ad Specialist, which
+      // is the one thing it must not do.
       data: missing.map((e) => ({
         event: e.event,
-        enabled: true,
-        audience: 'ROLE' as const,
+        enabled: !OFF_BY_DEFAULT.has(e.event),
+        audience: e.defaultAudience,
         audiencePermission: e.defaultPermission,
         subject: e.defaultSubject,
       })),
