@@ -230,35 +230,50 @@ export type TransitionOptions = {
   requiredCpl?: number | null;
   /** Step 12. */
   linkedCampaignId?: string | null;
+  /** Step 12, the current way: `campaigns.id` values to link on launch. */
+  campaignIds?: number[] | null;
   /** The version the caller last saw. Omit to skip the concurrency check. */
   expectedVersion?: number | null;
   ip?: string | null;
 };
 
+/** The most campaigns one brief may claim. Beyond this it is not a brief. */
+export const MAX_LINKED_CAMPAIGNS = 50;
+
+export type RequestTargets = {
+  /** The Google Ads account. Omit to leave it alone; `null` unlinks it. */
+  accountId?: number | null;
+  /** `campaigns.id` values, replacing whatever is linked. Omit to leave alone. */
+  campaignIds?: number[];
+};
+
 /**
- * Point a request at a Google Ads account, at any stage, without moving it.
+ * Point a request at the campaigns — and the account — it reports against.
  *
- * The Ops requirement form does not ask for an account — the Manager is the
- * one who knows which it lands in — and the brief editor closes the moment a
- * request is reviewed. Between those two facts a request past the handover
- * had no way to acquire an account at all, which meant it could never be
- * measured on the Assigned campaigns page. This is that way.
+ * Ops' requirement form asks for neither: the Manager is the one who knows
+ * where the work lands, and the brief editor closes the moment a request is
+ * reviewed. Between those two facts a request past the handover could never
+ * be measured at all. This is the way.
  *
- * It is deliberately not a transition: naming the account is bookkeeping
- * about where the work lives, not a step anybody signs off. It still takes
- * the optimistic lock, writes a timeline event and an audit row, because it
- * changes which numbers the request is judged by.
+ * Campaigns are a set, not a single value, because a client is rarely one
+ * campaign — the same brief routinely runs three or four, and reporting only
+ * the first would understate every one of them.
+ *
+ * It is deliberately not a transition: naming where the work lives is
+ * bookkeeping, not a step anybody signs off, and it stays available at every
+ * stage. It still takes the optimistic lock, writes a timeline event and an
+ * audit row, because it changes which numbers the request is judged by.
  */
-export async function setRequestAccount(
+export async function setRequestTargets(
   principal: Principal,
   requestId: string,
-  accountId: number | null,
+  targets: RequestTargets,
   opts: { expectedVersion?: number | null; ip?: string | null } = {}
 ) {
   // ASSIGN, not EDIT: this is the same decision as choosing who the work goes
   // to, and Ops — who may edit a brief — deliberately does not hold it.
   if (!principal.isSuperAdmin && !(await hasPermission(principal, 'AD_REQUESTS:ASSIGN'))) {
-    throw forbidden('Only a Manager can change the Google Ads account on a request.');
+    throw forbidden('Only a Manager can change the campaigns on a request.');
   }
 
   const request = await prisma.crmAdRequest.findUnique({
@@ -271,6 +286,7 @@ export async function setRequestAccount(
       createdById: true,
       assignedToId: true,
       account: { select: { descriptive_name: true } },
+      campaignLinks: { select: { campaignId: true } },
     },
   });
   if (!request) throw notFound('Ad request not found.');
@@ -284,49 +300,116 @@ export async function setRequestAccount(
     throw conflict('Someone else changed this request while you were looking at it. Reload and try again.');
   }
 
-  // Both directions matter: the account being moved *to* must be the actor's
-  // to see, or this becomes a way to read performance outside their scope.
-  if (accountId !== null && !canAccessAccount(principal, accountId)) {
-    throw forbidden('That account is not in your assigned scope.');
+  // ── The campaigns ─────────────────────────────────────────────────────────
+  const before = new Set(request.campaignLinks.map((l) => l.campaignId));
+  let after: Set<number> | null = null;
+  let derivedAccountId: number | null = null;
+
+  if (targets.campaignIds !== undefined) {
+    const wanted = Array.from(new Set(targets.campaignIds));
+    if (wanted.length > MAX_LINKED_CAMPAIGNS) {
+      throw badRequest(`A request can link at most ${MAX_LINKED_CAMPAIGNS} campaigns.`);
+    }
+
+    const found = wanted.length
+      ? await prisma.campaigns.findMany({
+          where: { id: { in: wanted } },
+          select: { id: true, account_id: true, name: true },
+        })
+      : [];
+    if (found.length !== wanted.length) {
+      throw badRequest('One of those campaigns no longer exists. Reload and pick again.');
+    }
+    // Scope is checked per campaign, through its account: picking a campaign
+    // is picking a window onto that account's spend.
+    for (const c of found) {
+      if (!canAccessAccount(principal, c.account_id)) {
+        throw forbidden('One of those campaigns belongs to an account outside your scope.');
+      }
+    }
+
+    after = new Set(wanted);
+
+    // When every campaign sits in one account and the request has none, the
+    // account is not a second question worth asking.
+    const accounts = new Set(found.map((c) => c.account_id));
+    if (accounts.size === 1 && targets.accountId === undefined && request.accountId === null) {
+      derivedAccountId = found[0]!.account_id;
+    }
   }
 
-  let nextName: string | null = null;
-  if (accountId !== null) {
+  // ── The account ───────────────────────────────────────────────────────────
+  const nextAccountId =
+    targets.accountId !== undefined ? targets.accountId : derivedAccountId;
+  let nextAccountName: string | null = null;
+
+  if (nextAccountId !== null && nextAccountId !== undefined) {
+    if (!canAccessAccount(principal, nextAccountId)) {
+      throw forbidden('That account is not in your assigned scope.');
+    }
     const account = await prisma.accounts.findUnique({
-      where: { id: accountId },
+      where: { id: nextAccountId },
       select: { descriptive_name: true },
     });
     if (!account) throw badRequest('That Google Ads account no longer exists.');
-    nextName = account.descriptive_name;
+    nextAccountName = account.descriptive_name;
   }
 
-  if (request.accountId === accountId) {
-    throw badRequest('That is already the account on this request.');
+  const accountChanged =
+    (targets.accountId !== undefined && targets.accountId !== request.accountId) ||
+    (derivedAccountId !== null && derivedAccountId !== request.accountId);
+  const added = after ? Array.from(after).filter((id) => !before.has(id)) : [];
+  const removed = after ? Array.from(before).filter((id) => !after!.has(id)) : [];
+
+  if (!accountChanged && added.length === 0 && removed.length === 0) {
+    throw badRequest('Nothing to change — that is already what this request is linked to.');
   }
 
-  const previousName = request.account?.descriptive_name ?? null;
-  const message =
-    accountId === null
-      ? `Unlinked the Google Ads account${previousName ? ` (${previousName})` : ''}`
-      : `Linked the Google Ads account ${nextName ?? accountId}` +
-        (previousName ? `, replacing ${previousName}` : '');
+  const parts: string[] = [];
+  if (added.length) parts.push(`linked ${added.length} campaign${added.length === 1 ? '' : 's'}`);
+  if (removed.length) parts.push(`unlinked ${removed.length}`);
+  if (accountChanged) {
+    const previousName = request.account?.descriptive_name ?? null;
+    parts.push(
+      nextAccountId === null || nextAccountId === undefined
+        ? `unlinked the account${previousName ? ` (${previousName})` : ''}`
+        : `set the account to ${nextAccountName ?? nextAccountId}`
+    );
+  }
+  const message = parts.join(', ').replace(/^./, (ch) => ch.toUpperCase());
 
   const updated = await prisma.$transaction(async (tx) => {
+    const data: Prisma.CrmAdRequestUncheckedUpdateInput = { version: { increment: 1 } };
+    if (accountChanged) data.accountId = nextAccountId ?? null;
+
     const count = await tx.crmAdRequest.updateMany({
       where: { id: requestId, version: request.version },
-      data: { accountId, version: { increment: 1 } },
+      data,
     });
     if (count.count === 0) {
       throw conflict('Someone else moved this request while you were acting on it. Reload and try again.');
     }
 
+    if (after) {
+      if (removed.length) {
+        await tx.crmAdRequestCampaign.deleteMany({
+          where: { requestId, campaignId: { in: removed } },
+        });
+      }
+      if (added.length) {
+        await tx.crmAdRequestCampaign.createMany({
+          data: added.map((campaignId) => ({
+            requestId,
+            campaignId,
+            linkedById: principal.userId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+
     await tx.crmAdRequestEvent.create({
-      data: {
-        requestId,
-        type: 'ASSIGNED',
-        message,
-        actorId: principal.userId,
-      },
+      data: { requestId, type: 'CAMPAIGN_LINKED', message, actorId: principal.userId },
     });
 
     return tx.crmAdRequest.findUniqueOrThrow({
@@ -337,6 +420,14 @@ export async function setRequestAccount(
         version: true,
         accountId: true,
         account: { select: { id: true, descriptive_name: true, customer_id: true } },
+        campaignLinks: {
+          select: {
+            campaignId: true,
+            campaign: {
+              select: { id: true, campaign_id: true, name: true, status: true, account_id: true },
+            },
+          },
+        },
       },
     });
   });
@@ -348,14 +439,39 @@ export async function setRequestAccount(
     description: `${request.reference}: ${message}`,
     targetType: 'CrmAdRequest',
     targetId: requestId,
-    metadata: { from: request.accountId, to: accountId },
+    metadata: {
+      accountFrom: request.accountId,
+      accountTo: accountChanged ? (nextAccountId ?? null) : request.accountId,
+      campaignsAdded: added,
+      campaignsRemoved: removed,
+    },
     ipAddress: opts.ip ?? null,
   });
 
   return {
-    ...updated,
+    id: updated.id,
+    reference: updated.reference,
+    version: updated.version,
+    accountId: updated.accountId,
     accountName: updated.account?.descriptive_name ?? null,
+    campaigns: updated.campaignLinks.map((l) => ({
+      id: l.campaign.id,
+      campaignId: String(l.campaign.campaign_id),
+      name: l.campaign.name,
+      status: l.campaign.status,
+      accountId: l.campaign.account_id,
+    })),
   };
+}
+
+/** Back-compat wrapper: the account-only route still speaks this shape. */
+export async function setRequestAccount(
+  principal: Principal,
+  requestId: string,
+  accountId: number | null,
+  opts: { expectedVersion?: number | null; ip?: string | null } = {}
+) {
+  return setRequestTargets(principal, requestId, { accountId }, opts);
 }
 
 /**
@@ -379,6 +495,7 @@ export async function transition(
       createdById: true, assignedToId: true, accountManagerId: true,
       adSpecialistId: true, budget: true, requiredCpl: true,
       linkedCampaignId: true, reviewRound: true,
+      campaignLinks: { select: { campaignId: true } },
     },
   });
   if (!request) throw notFound('Ad request not found.');
@@ -400,7 +517,36 @@ export async function transition(
     budget: opts.budget ?? (request.budget != null ? Number(request.budget) : null),
     requiredCpl: opts.requiredCpl ?? (request.requiredCpl != null ? Number(request.requiredCpl) : null),
     linkedCampaignId: opts.linkedCampaignId ?? request.linkedCampaignId,
+    // Counted after the payload, so "Mark live" can satisfy the requirement
+    // with the campaigns it is linking in this very call.
+    linkedCampaignCount: new Set([
+      ...request.campaignLinks.map((l) => l.campaignId),
+      ...(opts.campaignIds ?? []),
+    ]).size,
   };
+
+  // Scope every campaign the payload names, before it reaches a write.
+  // Marking live needs AD_REQUESTS:BUILD, which an Ad Specialist holds for
+  // their own accounts — without this, the same call would let them attach a
+  // campaign from an account they cannot see and then read its spend.
+  if (opts.campaignIds?.length) {
+    const wanted = Array.from(new Set(opts.campaignIds));
+    if (wanted.length > MAX_LINKED_CAMPAIGNS) {
+      throw badRequest(`A request can link at most ${MAX_LINKED_CAMPAIGNS} campaigns.`);
+    }
+    const found = await prisma.campaigns.findMany({
+      where: { id: { in: wanted } },
+      select: { id: true, account_id: true },
+    });
+    if (found.length !== wanted.length) {
+      throw badRequest('One of those campaigns no longer exists. Reload and pick again.');
+    }
+    for (const c of found) {
+      if (!canAccessAccount(principal, c.account_id)) {
+        throw forbidden('One of those campaigns belongs to an account outside your scope.');
+      }
+    }
+  }
 
   const granted = new Map<string, boolean>();
   const rule = findTransition(request.status, target);
@@ -479,6 +625,21 @@ export async function transition(
     });
     if (count.count === 0) {
       throw conflict('Someone else moved this request while you were acting on it. Reload and try again.');
+    }
+
+    // Linked inside the transition, not after it: the launch requirement was
+    // validated against these campaigns, so a failure here has to take the
+    // status change with it rather than leave a live request linked to
+    // nothing.
+    if (opts.campaignIds?.length) {
+      await tx.crmAdRequestCampaign.createMany({
+        data: Array.from(new Set(opts.campaignIds)).map((campaignId) => ({
+          requestId,
+          campaignId,
+          linkedById: principal.userId,
+        })),
+        skipDuplicates: true,
+      });
     }
 
     // Steps 7 and 9 close a review round, with its remarks and the draft it

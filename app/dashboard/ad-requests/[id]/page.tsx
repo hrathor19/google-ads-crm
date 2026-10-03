@@ -53,7 +53,8 @@ import {
   type Validation,
 } from '@/components/data/ad-copy-panel';
 import { LandingScorePanel, type LandingScoreData } from '@/components/data/landing-score-panel';
-import { AccountLinkDialog } from '@/components/data/account-link-dialog';
+import { CampaignLinkDialog } from '@/components/data/campaign-link-dialog';
+import { RequestPerformance } from '@/components/data/request-performance';
 import { apiSend, useApi } from '@/lib/hooks/use-api';
 import { usePermissions } from '@/components/providers/permission-provider';
 import { formatCurrency, formatDate, formatDateTime, formatRelative } from '@/lib/format';
@@ -75,6 +76,13 @@ type RequestDetail = {
   keywords: string | null;
   notes: string | null;
   linkedCampaignId: string | null;
+  linkedCampaigns: Array<{
+    id: number;
+    campaignId: string;
+    name: string | null;
+    status: string | null;
+    accountId: number;
+  }>;
   decisionReason: string | null;
   createdAt: string;
   accountId: number | null;
@@ -136,7 +144,7 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
   );
 
   const [pendingTransition, setPendingTransition] = useState<string | null>(null);
-  const [linkingAccount, setLinkingAccount] = useState(false);
+  const [linkingCampaigns, setLinkingCampaigns] = useState(false);
   const [reason, setReason] = useState('');
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
@@ -171,24 +179,27 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
     queryClient.invalidateQueries({ queryKey: ['notifications'] });
   };
 
-  async function saveAccount(accountId: number | null) {
+  async function saveCampaigns(payload: { campaignIds: number[]; accountId: number | null }) {
     setBusy(true);
     try {
-      await apiSend(`/api/ad-requests/${params.id}/account`, 'PUT', {
-        accountId,
+      await apiSend(`/api/ad-requests/${params.id}/campaigns`, 'PUT', {
+        ...payload,
         expectedVersion: data?.request.version ?? null,
       });
       toast({
-        title: accountId === null ? 'Account unlinked' : 'Google Ads account linked',
-        description: 'Assigned campaigns now reports this request against it.',
+        title: payload.campaignIds.length
+          ? `${payload.campaignIds.length} campaign${payload.campaignIds.length === 1 ? '' : 's'} linked`
+          : 'Campaigns unlinked',
+        description: 'Performance for this request now reads from them.',
       });
-      setLinkingAccount(false);
+      setLinkingCampaigns(false);
       invalidate();
       queryClient.invalidateQueries({ queryKey: ['assigned-campaigns'] });
+      queryClient.invalidateQueries({ queryKey: ['request-performance', params.id] });
     } catch (e) {
       toast({
         variant: 'destructive',
-        title: 'Could not change the account',
+        title: 'Could not change the campaigns',
         description: e instanceof Error ? e.message : 'Unknown error.',
       });
     } finally {
@@ -346,26 +357,32 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
               Owner: {r.assignedTo.name}
             </Badge>
           )}
-          {r.linkedCampaignId && (
-            <Badge variant="outline" className="gap-1 font-normal">
-              <Link2 className="h-3 w-3" aria-hidden="true" />
-              Campaign {r.linkedCampaignId}
-            </Badge>
-          )}
-          {/* The account is what the reporting is read from, so say plainly
-              when there isn't one rather than leaving a silent gap. */}
-          {r.accountName ? (
+          {r.accountName && (
             <Badge variant="outline" className="gap-1 font-normal">
               <Wallet className="h-3 w-3" aria-hidden="true" />
               {r.accountName}
+            </Badge>
+          )}
+          {/* The campaigns are what the reporting is read from, so say
+              plainly when there are none rather than leaving a silent gap. */}
+          {r.linkedCampaigns.length > 0 ? (
+            <Badge
+              variant="outline"
+              className="gap-1 font-normal"
+              title={r.linkedCampaigns.map((c) => c.name ?? c.campaignId).join(', ')}
+            >
+              <Link2 className="h-3 w-3" aria-hidden="true" />
+              {r.linkedCampaigns.length} campaign{r.linkedCampaigns.length === 1 ? '' : 's'}
             </Badge>
           ) : (
             <Badge
               variant="outline"
               className="gap-1 border-amber-500/30 bg-amber-500/10 font-normal text-amber-700 dark:text-amber-400"
             >
-              <Wallet className="h-3 w-3" aria-hidden="true" />
-              No account linked
+              <Link2 className="h-3 w-3" aria-hidden="true" />
+              {r.linkedCampaignId
+                ? `Campaign ${r.linkedCampaignId} (unlinked)`
+                : 'No campaigns linked'}
             </Badge>
           )}
           {can('AD_REQUESTS', 'ASSIGN') && (
@@ -374,9 +391,9 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
               variant="ghost"
               className="h-7 px-2 text-xs"
               disabled={busy}
-              onClick={() => setLinkingAccount(true)}
+              onClick={() => setLinkingCampaigns(true)}
             >
-              {r.accountName ? 'Change account' : 'Link an account'}
+              {r.linkedCampaigns.length > 0 ? 'Change campaigns' : 'Link campaigns'}
             </Button>
           )}
 
@@ -447,8 +464,29 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
               <span className="ml-1.5 text-xs text-muted-foreground">{r.reviewRounds.length}</span>
             </TabsTrigger>
           )}
+          {can('CAMPAIGNS', 'VIEW') && (
+            <TabsTrigger value="performance">
+              Performance
+              {r.linkedCampaigns.length > 0 && (
+                <span className="ml-1.5 text-xs text-muted-foreground">
+                  {r.linkedCampaigns.length}
+                </span>
+              )}
+            </TabsTrigger>
+          )}
           <TabsTrigger value="timeline">Timeline</TabsTrigger>
         </TabsList>
+
+        {can('CAMPAIGNS', 'VIEW') && (
+          <TabsContent value="performance" className="space-y-4">
+            <RequestPerformance
+              requestId={params.id}
+              onLinkCampaigns={
+                can('AD_REQUESTS', 'ASSIGN') ? () => setLinkingCampaigns(true) : undefined
+              }
+            />
+          </TabsContent>
+        )}
 
         {/* ─── Brief ─────────────────────────────────────────────────── */}
         <TabsContent value="brief">
@@ -769,18 +807,20 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       </Tabs>
 
       {/* Reason / campaign-link dialog */}
-      <AccountLinkDialog
-        open={linkingAccount}
+      <CampaignLinkDialog
+        open={linkingCampaigns}
         busy={busy}
         currentAccountId={data.request.accountId}
-        onCancel={() => setLinkingAccount(false)}
-        onConfirm={saveAccount}
+        currentCampaignIds={data.request.linkedCampaigns.map((c) => c.id)}
+        onCancel={() => setLinkingCampaigns(false)}
+        onConfirm={saveCampaigns}
       />
 
       <TransitionDialog
         target={pendingTransition}
         busy={busy}
         currentAccountId={data.request.accountId}
+        linkedCampaignCount={data.request.linkedCampaigns.length}
         onCancel={() => setPendingTransition(null)}
         onConfirm={(payload) => runTransition(pendingTransition!, payload)}
       />

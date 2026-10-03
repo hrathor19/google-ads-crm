@@ -29,6 +29,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       // campaign id, so writing it afterwards left the check looking at a
       // request that did not have one yet.
       linkedCampaignId: body.linkedCampaignId ?? null,
+      campaignIds: body.campaignIds ?? null,
       expectedVersion: body.expectedVersion ?? null,
       ip: clientIp(req),
     });

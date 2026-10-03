@@ -274,6 +274,8 @@ export function evaluate(params: {
     budget?: number | null;
     requiredCpl?: number | null;
     linkedCampaignId?: string | null;
+    /** Campaigns linked through the relation, once the payload is applied. */
+    linkedCampaignCount?: number;
   };
 }): Denial {
   const rule = findTransition(params.from, params.to);
@@ -329,9 +331,13 @@ function missingRequirement(
       if (provided.requiredCpl == null || provided.requiredCpl <= 0) return 'Set the required CPL.';
       return null;
     case 'CAMPAIGN_ID':
+      // Either way of linking satisfies this. The relation is how campaigns
+      // are picked now; the hand-typed id is still accepted so a request
+      // mid-flight when that changed is not stranded.
+      if ((provided.linkedCampaignCount ?? 0) > 0) return null;
       return (provided.linkedCampaignId ?? '').trim()
         ? null
-        : 'Link the Google Ads campaign ID before marking it live.';
+        : 'Link at least one Google Ads campaign before marking it live.';
     default:
       return null;
   }

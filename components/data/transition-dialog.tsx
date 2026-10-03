@@ -157,6 +157,7 @@ export function TransitionDialog({
   target,
   busy,
   currentAccountId,
+  linkedCampaignCount = 0,
   onCancel,
   onConfirm,
 }: {
@@ -164,6 +165,8 @@ export function TransitionDialog({
   busy: boolean;
   /** The account already on the request, so the picker opens on it. */
   currentAccountId?: number | null;
+  /** Campaigns already linked. When there are any, launch needs no typed id. */
+  linkedCampaignCount?: number;
   onCancel: () => void;
   onConfirm: (payload: TransitionPayload) => void;
 }) {
@@ -208,11 +211,15 @@ export function TransitionDialog({
 
   const budgetNum = Number(budget);
   const cplNum = Number(cpl);
+  // Campaigns picked from the list satisfy the launch requirement, so the
+  // hand-typed id is only asked for when nothing is linked — it is the
+  // fallback for a request that was mid-flight when picking replaced typing.
+  const campaignIdRequired = Boolean(config.needsCampaignId) && linkedCampaignCount === 0;
   const ready =
     (!config.assign || assigneeId !== '') &&
     (!config.needsReason || reason.trim().length > 0) &&
     (!config.needsBudget || (budgetNum > 0 && cplNum > 0)) &&
-    (!config.needsCampaignId || campaignId.trim().length > 0);
+    (!campaignIdRequired || campaignId.trim().length > 0);
 
   // How many leads the budget implies, as a sanity check on the pair.
   const impliedLeads = budgetNum > 0 && cplNum > 0 ? Math.floor(budgetNum / cplNum) : null;
@@ -226,7 +233,9 @@ export function TransitionDialog({
       payload.requiredCpl = cplNum;
     }
     if (config!.offersAccount && accountId) payload.accountId = Number(accountId);
-    if (config!.needsCampaignId) payload.linkedCampaignId = campaignId.trim();
+    if (config!.needsCampaignId && campaignId.trim()) {
+      payload.linkedCampaignId = campaignId.trim();
+    }
     onConfirm(payload);
   }
 
@@ -346,19 +355,32 @@ export function TransitionDialog({
             </div>
           )}
 
-          {config.needsCampaignId && (
-            <div className="space-y-1.5">
-              <Label htmlFor="campaignId">
-                Google Ads campaign ID <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="campaignId"
-                value={campaignId}
-                onChange={(e) => setCampaignId(e.target.value)}
-                placeholder="e.g. 21345678901"
-              />
-            </div>
-          )}
+          {config.needsCampaignId &&
+            (linkedCampaignCount > 0 ? (
+              <p className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {linkedCampaignCount} campaign{linkedCampaignCount === 1 ? '' : 's'} linked
+                </span>{' '}
+                — performance for this request is already reading from them. Use
+                &ldquo;Change campaigns&rdquo; if that is not the full set.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="campaignId">
+                  Google Ads campaign ID <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="campaignId"
+                  value={campaignId}
+                  onChange={(e) => setCampaignId(e.target.value)}
+                  placeholder="e.g. 21345678901"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Nothing is linked yet. Cancel and use &ldquo;Link campaigns&rdquo; to pick
+                  them from the list — a client usually runs more than one.
+                </p>
+              </div>
+            ))}
 
           {config.confirmNote && (
             <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">

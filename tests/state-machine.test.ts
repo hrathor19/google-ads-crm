@@ -297,15 +297,37 @@ describe('requirements', () => {
     if (!r.ok) expect(r.message).toMatch(expected);
   });
 
-  it('will not go live without a campaign ID', () => {
+  it('will not go live with no campaign at all', () => {
     const r = evaluate({
       from: 'ACCOUNT_ASSIGNED',
       to: 'LIVE',
       ...god,
-      provided: { ...complete, linkedCampaignId: '' },
+      provided: { ...complete, linkedCampaignId: '', linkedCampaignCount: 0 },
     });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.message).toMatch(/campaign ID/i);
+    if (!r.ok) expect(r.message).toMatch(/link at least one/i);
+  });
+
+  it('goes live on linked campaigns with no typed id', () => {
+    // Picking campaigns from the list is how they are linked now; the
+    // hand-typed id is only the fallback for a request that predates it.
+    const r = evaluate({
+      from: 'ACCOUNT_ASSIGNED',
+      to: 'LIVE',
+      ...god,
+      provided: { ...complete, linkedCampaignId: '', linkedCampaignCount: 3 },
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('still goes live on the legacy typed id alone', () => {
+    const r = evaluate({
+      from: 'ACCOUNT_ASSIGNED',
+      to: 'LIVE',
+      ...god,
+      provided: { ...complete, linkedCampaignId: '21345678901', linkedCampaignCount: 0 },
+    });
+    expect(r.ok).toBe(true);
   });
 
   it('refuses a rejection with no reason', () => {

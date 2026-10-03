@@ -496,6 +496,7 @@ model campaigns {
   recommendations              recommendations[]
   search_term_snapshots        search_term_snapshots[]
   search_terms                 search_terms[]
+  crm_ad_request_campaigns     CrmAdRequestCampaign[]
 
   @@unique([account_id, campaign_id], map: "campaigns_account_campaign")
   @@index([account_id], map: "ix_campaigns_account_id")
@@ -1017,6 +1018,7 @@ model CrmUser {
   specialistRequests CrmAdRequest[]       @relation("requestAdSpecialist")
   reviewsGiven       CrmAdRequestReview[] @relation("reviewBy")
   emailSettings      CrmEmailSetting[]    @relation("emailSettingUpdatedBy")
+  campaignLinks      CrmAdRequestCampaign[] @relation("campaignLinkedBy")
   auditLogs          CrmAuditLog[]
 
   @@index([roleId])
@@ -1140,6 +1142,7 @@ model CrmAdRequest {
   account        accounts? @relation(fields: [accountId], references: [id])
 
   events         CrmAdRequestEvent[]
+  campaignLinks  CrmAdRequestCampaign[]
   leadTargets    CrmAdRequestLeadTarget[]
   reviewRounds   CrmAdRequestReview[]
   attachments    CrmAdRequestAttachment[]
@@ -1190,6 +1193,34 @@ model CrmAdRequestReview {
 ///
 /// A child table rather than JSON so the months can be aggregated, compared
 /// against delivered leads, and edited one row at a time.
+/// The campaigns a request is running.
+///
+/// A client is rarely one campaign — the same brief routinely runs three or
+/// four — so the link is a relation rather than the single `linkedCampaignId`
+/// string it replaces. That column is kept for the rows that predate this and
+/// is still honoured when nothing is linked here, but new links land here and
+/// reporting reads this first.
+model CrmAdRequestCampaign {
+  id        String @id @default(cuid())
+  requestId String @map("request_id")
+  /// `campaigns.id` — the internal pk, not the Google campaign id, so the
+  /// link survives a campaign being renamed and breaks loudly if the
+  /// campaign is removed from the synced data.
+  campaignId Int    @map("campaign_id")
+
+  linkedById String?  @map("linked_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  request  CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  campaign campaigns    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  linkedBy CrmUser?     @relation("campaignLinkedBy", fields: [linkedById], references: [id])
+
+  @@unique([requestId, campaignId])
+  @@index([requestId])
+  @@index([campaignId])
+  @@map("crm_ad_request_campaigns")
+}
+
 model CrmAdRequestLeadTarget {
   id        String   @id @default(cuid())
   requestId String   @map("request_id")

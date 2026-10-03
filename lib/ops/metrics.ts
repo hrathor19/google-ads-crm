@@ -74,6 +74,19 @@ function accountFilter(column: string, accountIds: number[] | null | undefined):
 }
 
 /**
+ * A campaign-pk filter fragment.
+ *
+ * An empty list means "no campaigns", not "all of them" — the same discipline
+ * as `accountFilter`. A request whose links were all removed must report
+ * nothing, not the whole account.
+ */
+function campaignFilter(column: string, pks: number[] | null | undefined): Prisma.Sql | null {
+  if (pks === null || pks === undefined) return null;
+  if (pks.length === 0) return Prisma.sql`FALSE`;
+  return Prisma.sql`${Prisma.raw(column)} IN (${Prisma.join(pks)})`;
+}
+
+/**
  * A `DATE` bound parameter.
  *
  * `snapshot_date` is a bare Postgres DATE. Binding a JS `Date` sends a
@@ -325,8 +338,11 @@ export type DailyPoint = {
 export async function dailySeries(
   start: Date,
   end: Date,
-  scope: Scope
+  scope: Scope,
+  opts: { campaignPks?: number[] | null } = {}
 ): Promise<DailyPoint[]> {
+  const campaigns = campaignFilter('campaign_id', opts.campaignPks);
+  const campaignSql = campaigns ? Prisma.sql`AND ${campaigns}` : Prisma.empty;
   const rows = await prisma.$queryRaw<
     Array<{
       d: Date;
@@ -345,6 +361,7 @@ export async function dailySeries(
     FROM campaign_snapshots
     WHERE snapshot_date BETWEEN ${day(start)} AND ${day(end)}
       AND ${accountFilter('account_id', scope.accountIds)}
+      ${campaignSql}
     GROUP BY snapshot_date
     ORDER BY snapshot_date
   `;
@@ -481,10 +498,18 @@ export async function campaignRollup(
   start: Date,
   end: Date,
   scope: Scope,
-  opts: { accountId?: number | null; statuses?: string[]; search?: string | null } = {}
+  opts: {
+    accountId?: number | null;
+    /** Restrict to these `campaigns.id` values; an empty list means none. */
+    campaignPks?: number[] | null;
+    statuses?: string[];
+    search?: string | null;
+  } = {}
 ): Promise<CampaignRow[]> {
   const extra: Prisma.Sql[] = [];
   if (opts.accountId != null) extra.push(Prisma.sql`c.account_id = ${opts.accountId}`);
+  const many = campaignFilter('c.id', opts.campaignPks);
+  if (many) extra.push(many);
   if (opts.statuses?.length) {
     extra.push(Prisma.sql`c.status IN (${Prisma.join(opts.statuses)})`);
   }
@@ -577,10 +602,12 @@ export async function adGroupRollup(
   start: Date,
   end: Date,
   scope: Scope,
-  opts: { campaignPk?: number | null; accountId?: number | null } = {}
+  opts: { campaignPk?: number | null; campaignPks?: number[] | null; accountId?: number | null } = {}
 ): Promise<AdGroupRow[]> {
   const extra: Prisma.Sql[] = [];
   if (opts.campaignPk != null) extra.push(Prisma.sql`g.campaign_id = ${opts.campaignPk}`);
+  const manyGroups = campaignFilter('g.campaign_id', opts.campaignPks);
+  if (manyGroups) extra.push(manyGroups);
   if (opts.accountId != null) extra.push(Prisma.sql`g.account_id = ${opts.accountId}`);
   const extraSql = extra.length ? Prisma.sql`AND ${Prisma.join(extra, ' AND ')}` : Prisma.empty;
 
@@ -764,6 +791,7 @@ export async function keywordRollup(
   opts: {
     adGroupPk?: number | null;
     campaignPk?: number | null;
+    campaignPks?: number[] | null;
     accountId?: number | null;
     search?: string | null;
     limit?: number;
@@ -774,6 +802,8 @@ export async function keywordRollup(
   // The keywords dimension carries no campaign_id — a keyword's campaign is
   // reached through its ad group, which is why the join below exists.
   if (opts.campaignPk != null) extra.push(Prisma.sql`g.campaign_id = ${opts.campaignPk}`);
+  const manyKeywords = campaignFilter('g.campaign_id', opts.campaignPks);
+  if (manyKeywords) extra.push(manyKeywords);
   if (opts.accountId != null) extra.push(Prisma.sql`k.account_id = ${opts.accountId}`);
   if (opts.search) extra.push(Prisma.sql`k.text ILIKE ${`%${opts.search}%`}`);
   const extraSql = extra.length ? Prisma.sql`AND ${Prisma.join(extra, ' AND ')}` : Prisma.empty;
@@ -884,6 +914,7 @@ export async function searchTermExplore(params: {
   scope: Scope;
   accountId?: number | null;
   campaignPk?: number | null;
+  campaignPks?: number[] | null;
   adGroupPk?: number | null;
   minClicks?: number;
   minCost?: number;
@@ -899,6 +930,7 @@ export async function searchTermExplore(params: {
     scope,
     accountId,
     campaignPk,
+    campaignPks,
     adGroupPk,
     minClicks = 0,
     minCost = 0,
@@ -915,6 +947,8 @@ export async function searchTermExplore(params: {
   ];
   if (accountId != null) where.push(Prisma.sql`st.account_id = ${accountId}`);
   if (campaignPk != null) where.push(Prisma.sql`st.campaign_id = ${campaignPk}`);
+  const manyTerms = campaignFilter('st.campaign_id', campaignPks);
+  if (manyTerms) where.push(manyTerms);
   if (adGroupPk != null) where.push(Prisma.sql`st.ad_group_id = ${adGroupPk}`);
   if (contains) where.push(Prisma.sql`st.query ILIKE ${`%${contains}%`}`);
   const whereSql = Prisma.join(where, ' AND ');

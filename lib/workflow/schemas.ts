@@ -200,6 +200,8 @@ export const transitionSchema = z.object({
   requiredCpl: z.coerce.number().positive().max(10_000_000).nullable().optional(),
   /** Step 12. */
   linkedCampaignId: z.string().trim().max(64).nullable().optional(),
+  /** Step 12: `campaigns.id` values linked as part of going live. */
+  campaignIds: z.array(z.coerce.number().int().positive()).max(50).optional(),
   /**
    * The version the client last rendered. Sent so two people acting at once
    * cannot both succeed; omitted by scripts that do not track it.

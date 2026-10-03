@@ -56,6 +56,15 @@ const detailSelect = {
   leadTargets: { orderBy: { month: 'asc' }, select: { month: true, leads: true } },
 
   linkedCampaignId: true,
+  campaignLinks: {
+    orderBy: { createdAt: 'asc' as const },
+    select: {
+      campaignId: true,
+      campaign: {
+        select: { id: true, campaign_id: true, name: true, status: true, account_id: true },
+      },
+    },
+  },
   decisionReason: true,
   submittedAt: true,
   decidedAt: true,
@@ -159,6 +168,14 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
         requiredCpl:
           canSeeMoney && request.requiredCpl != null ? Number(request.requiredCpl) : null,
         accountName: request.account?.descriptive_name ?? null,
+        linkedCampaigns: request.campaignLinks.map((l) => ({
+          id: l.campaign.id,
+          campaignId: String(l.campaign.campaign_id),
+          name: l.campaign.name,
+          status: l.campaign.status,
+          accountId: l.campaign.account_id,
+        })),
+        campaignLinks: undefined,
       },
       transitions,
       canSeeMoney,

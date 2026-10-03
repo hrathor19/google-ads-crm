@@ -680,6 +680,152 @@ async function main() {
     check('Every account change is audited', trail >= 2, `${trail} row(s)`);
   }
 
+  console.log('\n── Linking many campaigns to one request ──');
+
+  if (accountId !== null) {
+    const pool = await prisma.campaigns.findMany({
+      where: { account_id: accountId },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: 4,
+    });
+    const picks = pool.map((c) => c.id);
+
+    const opsLink = await opsSession.json(`/api/ad-requests/${requestId}/campaigns`, {
+      method: 'PUT',
+      body: JSON.stringify({ campaignIds: picks }),
+    });
+    check('Operations cannot link campaigns', opsLink.status === 403, `got ${opsLink.status}`);
+
+    const ghostLink = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/campaigns`,
+      { method: 'PUT', body: JSON.stringify({ campaignIds: [2_000_000_000] }) }
+    );
+    check('A campaign that does not exist is refused', ghostLink.status === 400, ghostLink.body?.error);
+
+    const tooMany = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/campaigns`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ campaignIds: Array.from({ length: 60 }, (_, i) => i + 1) }),
+      }
+    );
+    check('More than the cap is refused', tooMany.status === 400, `got ${tooMany.status}`);
+
+    const linked = await managerSession.json<{ campaigns: Array<{ id: number }> }>(
+      `/api/ad-requests/${requestId}/campaigns`,
+      { method: 'PUT', body: JSON.stringify({ campaignIds: picks }) }
+    );
+    check(
+      'The Manager links several campaigns at once',
+      linked.status === 200 && linked.body.campaigns.length === picks.length,
+      `${linked.body.campaigns?.length ?? 0} of ${picks.length}`
+    );
+
+    const repeat = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/campaigns`,
+      { method: 'PUT', body: JSON.stringify({ campaignIds: picks }) }
+    );
+    check('Re-saving the same set is refused', repeat.status === 400, repeat.body?.error);
+
+    // The whole point: reporting narrows from the account to the picked set.
+    const narrowed = await managerSession.json<{
+      assignments: Array<{ id: string; campaignCount: number; linkedCampaignCount: number }>;
+    }>(`/api/assigned-campaigns?days=90&specialistId=${adsTeam.id}`);
+    const narrowRow = narrowed.body.assignments?.find((a) => a.id === requestId);
+    check(
+      'Reporting narrows from the whole account to the linked campaigns',
+      narrowRow?.campaignCount === picks.length && narrowRow?.linkedCampaignCount === picks.length,
+      `${narrowRow?.campaignCount} campaign(s), ${narrowRow?.linkedCampaignCount} linked`
+    );
+
+    const deep = await managerSession.json<{
+      basis: string;
+      campaignCount: number;
+      campaigns: unknown[];
+      adGroups: unknown[];
+      keywords: unknown[];
+      searchTerms: unknown[];
+      totals: { cost: number | null };
+    }>(`/api/ad-requests/${requestId}/performance?days=90`);
+    check(
+      'The deep view reports on exactly the linked campaigns',
+      deep.status === 200 && deep.body.basis === 'LINKED' && deep.body.campaignCount === picks.length,
+      `basis=${deep.body?.basis}, ${deep.body?.campaignCount} campaign(s)`
+    );
+    check(
+      'It drills through ad groups, keywords and search terms',
+      Array.isArray(deep.body.adGroups) &&
+        Array.isArray(deep.body.keywords) &&
+        Array.isArray(deep.body.searchTerms),
+      `${deep.body.adGroups?.length} ad groups, ${deep.body.keywords?.length} keywords, ${deep.body.searchTerms?.length} terms`
+    );
+
+    const opsDeep = await opsSession.json<{ totals: { cost: number | null }; requiredCpl: number | null }>(
+      `/api/ad-requests/${requestId}/performance?days=90`
+    );
+    check(
+      'The deep view withholds money from a role without it',
+      opsDeep.status === 200 &&
+        opsDeep.body.totals.cost === null &&
+        opsDeep.body.requiredCpl === null,
+      `cost=${opsDeep.body?.totals?.cost}`
+    );
+
+    // Unlinking everything must report nothing, not silently widen back to
+    // the account — that would credit a request with campaigns nobody put
+    // on it.
+    const cleared = await managerSession.json<{ campaigns: unknown[] }>(
+      `/api/ad-requests/${requestId}/campaigns`,
+      { method: 'PUT', body: JSON.stringify({ campaignIds: [] }) }
+    );
+    check('All campaigns can be unlinked', cleared.status === 200 && cleared.body.campaigns.length === 0);
+
+    const afterClear = await managerSession.json<{
+      assignments: Array<{ id: string; campaignCount: number; linkedCampaignCount: number }>;
+    }>(`/api/assigned-campaigns?days=90&specialistId=${adsTeam.id}`);
+    const clearedRow = afterClear.body.assignments?.find((a) => a.id === requestId);
+    check(
+      'With nothing linked the account stands in again',
+      (clearedRow?.campaignCount ?? 0) > picks.length && clearedRow?.linkedCampaignCount === 0,
+      `${clearedRow?.campaignCount} campaign(s)`
+    );
+
+    // Put the links back so the sections after this see the narrow set.
+    await managerSession.json(`/api/ad-requests/${requestId}/campaigns`, {
+      method: 'PUT',
+      body: JSON.stringify({ campaignIds: picks }),
+    });
+
+    const detail = await managerSession.json<{
+      request: { linkedCampaigns: Array<{ id: number; name: string | null }> };
+    }>(`/api/ad-requests/${requestId}`);
+    check(
+      'The request detail carries the linked campaigns',
+      detail.body.request.linkedCampaigns?.length === picks.length,
+      `${detail.body.request.linkedCampaigns?.length} campaign(s)`
+    );
+
+    const allOptions = await managerSession.json<{ campaigns: unknown[]; total: number }>(
+      '/api/campaigns/options'
+    );
+    const options = await managerSession.json<{
+      campaigns: Array<{ accountId: number }>;
+      total: number;
+    }>(`/api/campaigns/options?accountId=${accountId}`);
+    check(
+      'The picker lists campaigns',
+      options.status === 200 && options.body.campaigns.length > 0,
+      `${options.body.campaigns?.length} of ${options.body.total}`
+    );
+    check(
+      'And narrowing by account actually narrows it',
+      options.body.total < allOptions.body.total &&
+        options.body.campaigns.every((c) => c.accountId === accountId),
+      `${options.body.total} vs ${allOptions.body.total} unfiltered`
+    );
+  }
+
   console.log('\n── Assigned campaign performance ──');
 
   const mgrAssigned = await managerSession.json<{
@@ -738,10 +884,8 @@ async function main() {
     `${mgrCampaigns.body.campaigns.length} vs ${mgrCampaigns.body.totals.campaigns}`
   );
   if (accountId !== null) {
-    // The request went live against a made-up campaign ID. The account it was
-    // handed over with is what has to carry the reporting.
     check(
-      'An unresolvable campaign link falls back to the handed-over account',
+      'The assignment reports against its campaigns',
       (specialistRow?.campaignCount ?? 0) > 0,
       `${specialistRow?.campaignCount ?? 0} campaign(s)`
     );

@@ -49,6 +49,7 @@ const assignment = (o: Partial<AssignmentRow> & { id: string }): AssignmentRow =
   specialistName: 'Lakshmi',
   accountManagerName: null,
   linkedCampaignId: null,
+  linkedCampaignCount: 0,
   requiredCpl: null,
   requiredLeads: null,
   budget: null,
@@ -135,8 +136,37 @@ describe('which campaigns belong to an assignment', () => {
     campaign({ id: 3, accountId: 2, campaignId: '333' }),
   ];
 
-  it('a linked campaign wins over the account', () => {
-    const got = campaignsFor({ linkedCampaignId: '222', accountId: 1 }, campaigns);
+  it('reports exactly the campaigns that were linked', () => {
+    const got = campaignsFor(
+      { linkedCampaignPks: [1, 3], linkedCampaignId: null, accountId: 1 },
+      campaigns
+    );
+    expect(got.map((c) => c.id)).toEqual([1, 3]);
+  });
+
+  it('linked campaigns beat both the legacy id and the account', () => {
+    const got = campaignsFor(
+      { linkedCampaignPks: [2], linkedCampaignId: '111', accountId: 1 },
+      campaigns
+    );
+    expect(got.map((c) => c.id)).toEqual([2]);
+  });
+
+  it('a link that resolves to nothing visible reports nothing, not the account', () => {
+    // Widening an explicit choice to the whole account would credit an
+    // assignment with campaigns nobody put on it.
+    const got = campaignsFor(
+      { linkedCampaignPks: [99], linkedCampaignId: null, accountId: 1 },
+      campaigns
+    );
+    expect(got).toEqual([]);
+  });
+
+  it('still honours the legacy single id when nothing is linked', () => {
+    const got = campaignsFor(
+      { linkedCampaignPks: [], linkedCampaignId: '222', accountId: 1 },
+      campaigns
+    );
     expect(got.map((c) => c.id)).toEqual([2]);
   });
 
@@ -149,13 +179,13 @@ describe('which campaigns belong to an assignment', () => {
     expect(campaignsFor({ linkedCampaignId: null, accountId: null }, campaigns)).toEqual([]);
   });
 
-  it('falls back to the account when the linked ID matches nothing', () => {
+  it('falls back to the account when the legacy ID matches nothing', () => {
     // A transposed digit at launch must not blank the account's performance.
     const got = campaignsFor({ linkedCampaignId: '999', accountId: 1 }, campaigns);
     expect(got.map((c) => c.id)).toEqual([1, 2]);
   });
 
-  it('claims nothing when an unresolvable link has no account behind it', () => {
+  it('claims nothing when an unresolvable legacy id has no account behind it', () => {
     expect(campaignsFor({ linkedCampaignId: '999', accountId: null }, campaigns)).toEqual([]);
   });
 });

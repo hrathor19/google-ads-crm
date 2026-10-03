@@ -23,22 +23,24 @@ import {
  * synced Google Ads data and measures it against the two numbers the Manager
  * approved at step 10: the required CPL and the required leads.
  *
- * Two rules decide which campaigns belong to an assignment:
+ * Three rules decide which campaigns belong to an assignment, in order:
  *
- *  1. **A linked campaign wins.** Once the Ad Specialist marks the request
- *     live they record the Google Ads campaign ID, and from then on the
- *     assignment means exactly that campaign.
- *  2. **Otherwise the account stands in for it.** Between the handover and
- *     the launch there is no campaign ID yet, but the specialist already owns
- *     the account — so every campaign in it is theirs. Reporting nothing
- *     during that stretch would hide precisely the period somebody is being
- *     judged on.
+ *  1. **Explicitly linked campaigns win.** A client is rarely one campaign —
+ *     the same brief routinely runs three or four — so the Manager picks them
+ *     and the assignment means exactly that set.
+ *  2. **Then the legacy single campaign id.** The column `linkedCampaignId`
+ *     predates the relation and still carries rows that were never relinked.
+ *  3. **Otherwise the account stands in.** Between the handover and the
+ *     launch nothing is linked yet, but the specialist already owns the
+ *     account — so every campaign in it is theirs. Reporting nothing during
+ *     that stretch would hide precisely the period somebody is being judged
+ *     on.
  *
- * A linked ID that matches nothing falls back to rule 2 rather than reporting
- * an empty assignment. The ID is typed by hand at launch, and one transposed
- * digit should not blank an account's performance — especially since the
- * rollup returns a zeroed row for a campaign that exists but had no activity,
- * so "no match" really does mean "no such campaign".
+ * A legacy id that matches nothing falls through to rule 3 rather than
+ * reporting an empty assignment: it was typed by hand, and one transposed
+ * digit should not blank an account. Rule 1 does not fall through — an
+ * explicit, resolvable choice of campaigns is an answer, and quietly widening
+ * it to the whole account would misreport whose numbers these are.
  *
  * Because two assignments can cover the same account, the same campaign can
  * belong to both. Per-assignment rows therefore overlap by design, and the
@@ -116,11 +118,23 @@ export function sumTotals(rows: Summable[]): Totals {
   };
 }
 
-/** The campaigns that count as one assignment's — rule 1, then rule 2. */
-export function campaignsFor<T extends { campaignId: string; accountId: number }>(
-  assignment: { linkedCampaignId: string | null; accountId: number | null },
+/** The campaigns that count as one assignment's — rules 1, 2, then 3. */
+export function campaignsFor<T extends { id: number; campaignId: string; accountId: number }>(
+  assignment: {
+    /** `campaigns.id` values the Manager picked. */
+    linkedCampaignPks?: number[] | null;
+    linkedCampaignId: string | null;
+    accountId: number | null;
+  },
   campaigns: T[]
 ): T[] {
+  // Rule 1 is final, including when the picked campaigns are outside the
+  // caller's scope and so absent from `campaigns`: an explicit choice that
+  // resolves to nothing visible must report nothing, not the whole account.
+  if (assignment.linkedCampaignPks && assignment.linkedCampaignPks.length > 0) {
+    const wanted = new Set(assignment.linkedCampaignPks);
+    return campaigns.filter((c) => wanted.has(c.id));
+  }
   if (assignment.linkedCampaignId) {
     const linked = campaigns.filter((c) => c.campaignId === assignment.linkedCampaignId);
     if (linked.length > 0) return linked;
@@ -143,6 +157,8 @@ export type AssignmentRow = {
   specialistName: string | null;
   accountManagerName: string | null;
   linkedCampaignId: string | null;
+  /** How many campaigns are explicitly linked; 0 means the account stands in. */
+  linkedCampaignCount: number;
   /** Null until the Manager approves one at step 10. */
   requiredCpl: number | null;
   requiredLeads: number | null;
@@ -217,6 +233,7 @@ export async function assignedPerformance(params: {
       adSpecialist: { select: { id: true, name: true } },
       accountManager: { select: { name: true } },
       account: { select: { descriptive_name: true } },
+      campaignLinks: { select: { campaignId: true, campaign: { select: { account_id: true } } } },
     },
   });
 
@@ -225,7 +242,14 @@ export async function assignedPerformance(params: {
 
   // ── Which accounts hold the campaigns we need ──────────────────────────────
   const accountIds = new Set<number>();
-  for (const r of requests) if (r.accountId !== null) accountIds.add(r.accountId);
+  for (const r of requests) {
+    if (r.accountId !== null) accountIds.add(r.accountId);
+    // A linked campaign can sit in an account the request itself is not tied
+    // to — the brief was raised before accounts were picked, or the client
+    // runs across two. The rollup is fetched per account, so each one has to
+    // be in the list or its campaigns come back missing.
+    for (const l of r.campaignLinks) accountIds.add(l.campaign.account_id);
+  }
 
   // A request can carry a linked campaign without an account — the campaign ID
   // was typed in at launch and the brief was raised before accounts were
@@ -274,8 +298,9 @@ export async function assignedPerformance(params: {
   // ── One row per assignment ─────────────────────────────────────────────────
   const assignments: AssignmentRow[] = requests.map((r) => {
     const requiredCpl = r.requiredCpl === null ? null : Number(r.requiredCpl);
+    const linkedCampaignPks = r.campaignLinks.map((l) => l.campaignId);
     const mine = campaignsFor(
-      { linkedCampaignId: r.linkedCampaignId, accountId: r.accountId },
+      { linkedCampaignPks, linkedCampaignId: r.linkedCampaignId, accountId: r.accountId },
       campaigns
     );
     const totals = sumTotals(mine);
@@ -293,6 +318,7 @@ export async function assignedPerformance(params: {
       specialistName,
       accountManagerName: r.accountManager?.name ?? null,
       linkedCampaignId: r.linkedCampaignId,
+      linkedCampaignCount: linkedCampaignPks.length,
       requiredCpl,
       requiredLeads: r.requiredLeads,
       budget: r.budget === null ? null : Number(r.budget),
@@ -371,4 +397,80 @@ export function summarise(
       accounts: accounts.size,
     },
   };
+}
+
+// ─── One request, in depth ───────────────────────────────────────────────────
+
+/** How a request's campaign set was arrived at — shown so the page can say. */
+export type CampaignBasis = 'LINKED' | 'LEGACY' | 'ACCOUNT' | 'NONE';
+
+export type ResolvedCampaigns = {
+  /** `campaigns.id` values, already filtered to the caller's scope. */
+  pks: number[];
+  basis: CampaignBasis;
+};
+
+/**
+ * The campaign set behind one request, resolved against the database.
+ *
+ * Same precedence as `campaignsFor`, but it reads the ids straight from
+ * Postgres rather than filtering a pre-fetched catalogue — the per-request
+ * page wants only this request's campaigns, and fetching every campaign in
+ * the account to throw most of them away would be absurd at 1,100 campaigns.
+ *
+ * Scope is applied to every branch. A link the caller may not see is dropped
+ * rather than refused: a Manager scoped to two accounts should still get a
+ * usable page for a request that also touches a third, with the part they may
+ * see and nothing more.
+ */
+export async function resolveRequestCampaigns(
+  request: {
+    accountId: number | null;
+    linkedCampaignId: string | null;
+    campaignLinks: Array<{ campaignId: number }>;
+  },
+  scope: Scope
+): Promise<ResolvedCampaigns> {
+  const inScope = (ids: number[]) =>
+    ids.length === 0
+      ? Promise.resolve([] as Array<{ id: number }>)
+      : prisma.campaigns.findMany({
+          where: {
+            id: { in: ids },
+            ...(scope.accountIds === null ? {} : { account_id: { in: scope.accountIds } }),
+          },
+          select: { id: true },
+        });
+
+  if (request.campaignLinks.length > 0) {
+    const rows = await inScope(request.campaignLinks.map((l) => l.campaignId));
+    // LINKED even when scope empties it: the choice was made, and falling
+    // through to the account would report campaigns nobody put on this brief.
+    return { pks: rows.map((r) => r.id), basis: 'LINKED' };
+  }
+
+  const legacy = asCampaignId(request.linkedCampaignId);
+  if (legacy !== null) {
+    const rows = await prisma.campaigns.findMany({
+      where: {
+        campaign_id: legacy,
+        ...(scope.accountIds === null ? {} : { account_id: { in: scope.accountIds } }),
+      },
+      select: { id: true },
+    });
+    if (rows.length > 0) return { pks: rows.map((r) => r.id), basis: 'LEGACY' };
+  }
+
+  if (request.accountId !== null) {
+    if (scope.accountIds !== null && !scope.accountIds.includes(request.accountId)) {
+      return { pks: [], basis: 'NONE' };
+    }
+    const rows = await prisma.campaigns.findMany({
+      where: { account_id: request.accountId },
+      select: { id: true },
+    });
+    return { pks: rows.map((r) => r.id), basis: 'ACCOUNT' };
+  }
+
+  return { pks: [], basis: 'NONE' };
 }

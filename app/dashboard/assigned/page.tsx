@@ -49,6 +49,7 @@ type AssignmentRow = {
   specialistName: string | null;
   accountManagerName: string | null;
   linkedCampaignId: string | null;
+  linkedCampaignCount: number;
   requiredCpl: number | null;
   requiredLeads: number | null;
   campaignCount: number;
@@ -255,7 +256,21 @@ export default function AssignedCampaignsPage() {
         ) : (
           <div className="tabular-nums">
             {formatNumber(r.campaignCount)}
-            <p className="text-xs text-muted-foreground">{r.enabledCampaignCount} enabled</p>
+            {/* Say when the figures are the whole account rather than this
+                client's campaigns — otherwise an unlinked request looks like
+                a spectacular performer on somebody else's spend. */}
+            <p
+              className={cn(
+                'text-xs',
+                r.linkedCampaignCount === 0
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-muted-foreground'
+              )}
+            >
+              {r.linkedCampaignCount === 0
+                ? 'whole account'
+                : `${r.enabledCampaignCount} enabled`}
+            </p>
           </div>
         ),
       sortValue: (r) => r.campaignCount,
