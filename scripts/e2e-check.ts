@@ -606,6 +606,80 @@ async function main() {
   check('The copy version is attached', detail.body.request.adCopyVersions.length === 1);
   check('The landing score is attached', detail.body.request.landingScores.length === 1);
 
+  console.log('\n── Changing the Google Ads account out of band ──');
+
+  if (accountId !== null) {
+    const opsRelink = await opsSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId }) }
+    );
+    check(
+      'Operations cannot change the account, though it raised the request',
+      opsRelink.status === 403,
+      `got ${opsRelink.status}`
+    );
+
+    const adsRelink = await adsSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId }) }
+    );
+    check(
+      'The Ad Specialist cannot either — it is a Manager decision',
+      adsRelink.status === 403,
+      `got ${adsRelink.status}`
+    );
+
+    const noop = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId }) }
+    );
+    check('Re-picking the same account is refused', noop.status === 400, noop.body?.error);
+
+    const ghost = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId: 2_000_000_000 }) }
+    );
+    check('An account that does not exist is refused', ghost.status === 400, ghost.body?.error);
+
+    // The optimistic lock holds here too: this changes which numbers the
+    // request is judged by, so a stale page must not win.
+    const stale = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId: null, expectedVersion: 0 }) }
+    );
+    check('A stale version is refused', stale.status === 409, `got ${stale.status}`);
+
+    const unlink = await managerSession.json<{ accountId: number | null; version: number }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId: null }) }
+    );
+    check(
+      'The Manager can unlink it',
+      unlink.status === 200 && unlink.body.accountId === null,
+      `got ${unlink.status}`
+    );
+
+    const unlinked = await managerSession.json<{
+      assignments: Array<{ id: string; campaignCount: number }>;
+    }>('/api/assigned-campaigns?days=90');
+    check(
+      'With no account the assignment stays listed, reporting nothing',
+      (unlinked.body.assignments ?? []).find((a) => a.id === requestId)?.campaignCount === 0,
+      `${unlinked.body.assignments?.find((a) => a.id === requestId)?.campaignCount} campaign(s)`
+    );
+
+    const relink = await managerSession.json<{ accountId: number | null }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId }) }
+    );
+    check('And link it back', relink.status === 200 && relink.body.accountId === accountId);
+
+    const trail = await prisma.crmAuditLog.count({
+      where: { action: 'REQUEST_ACCOUNT_CHANGED', targetId: requestId },
+    });
+    check('Every account change is audited', trail >= 2, `${trail} row(s)`);
+  }
+
   console.log('\n── Assigned campaign performance ──');
 
   const mgrAssigned = await managerSession.json<{

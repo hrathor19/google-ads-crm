@@ -236,6 +236,129 @@ export type TransitionOptions = {
 };
 
 /**
+ * Point a request at a Google Ads account, at any stage, without moving it.
+ *
+ * The Ops requirement form does not ask for an account — the Manager is the
+ * one who knows which it lands in — and the brief editor closes the moment a
+ * request is reviewed. Between those two facts a request past the handover
+ * had no way to acquire an account at all, which meant it could never be
+ * measured on the Assigned campaigns page. This is that way.
+ *
+ * It is deliberately not a transition: naming the account is bookkeeping
+ * about where the work lives, not a step anybody signs off. It still takes
+ * the optimistic lock, writes a timeline event and an audit row, because it
+ * changes which numbers the request is judged by.
+ */
+export async function setRequestAccount(
+  principal: Principal,
+  requestId: string,
+  accountId: number | null,
+  opts: { expectedVersion?: number | null; ip?: string | null } = {}
+) {
+  // ASSIGN, not EDIT: this is the same decision as choosing who the work goes
+  // to, and Ops — who may edit a brief — deliberately does not hold it.
+  if (!principal.isSuperAdmin && !(await hasPermission(principal, 'AD_REQUESTS:ASSIGN'))) {
+    throw forbidden('Only a Manager can change the Google Ads account on a request.');
+  }
+
+  const request = await prisma.crmAdRequest.findUnique({
+    where: { id: requestId },
+    select: {
+      id: true,
+      reference: true,
+      version: true,
+      accountId: true,
+      createdById: true,
+      assignedToId: true,
+      account: { select: { descriptive_name: true } },
+    },
+  });
+  if (!request) throw notFound('Ad request not found.');
+  await assertVisible(principal, request);
+
+  if (
+    opts.expectedVersion !== undefined &&
+    opts.expectedVersion !== null &&
+    opts.expectedVersion !== request.version
+  ) {
+    throw conflict('Someone else changed this request while you were looking at it. Reload and try again.');
+  }
+
+  // Both directions matter: the account being moved *to* must be the actor's
+  // to see, or this becomes a way to read performance outside their scope.
+  if (accountId !== null && !canAccessAccount(principal, accountId)) {
+    throw forbidden('That account is not in your assigned scope.');
+  }
+
+  let nextName: string | null = null;
+  if (accountId !== null) {
+    const account = await prisma.accounts.findUnique({
+      where: { id: accountId },
+      select: { descriptive_name: true },
+    });
+    if (!account) throw badRequest('That Google Ads account no longer exists.');
+    nextName = account.descriptive_name;
+  }
+
+  if (request.accountId === accountId) {
+    throw badRequest('That is already the account on this request.');
+  }
+
+  const previousName = request.account?.descriptive_name ?? null;
+  const message =
+    accountId === null
+      ? `Unlinked the Google Ads account${previousName ? ` (${previousName})` : ''}`
+      : `Linked the Google Ads account ${nextName ?? accountId}` +
+        (previousName ? `, replacing ${previousName}` : '');
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const count = await tx.crmAdRequest.updateMany({
+      where: { id: requestId, version: request.version },
+      data: { accountId, version: { increment: 1 } },
+    });
+    if (count.count === 0) {
+      throw conflict('Someone else moved this request while you were acting on it. Reload and try again.');
+    }
+
+    await tx.crmAdRequestEvent.create({
+      data: {
+        requestId,
+        type: 'ASSIGNED',
+        message,
+        actorId: principal.userId,
+      },
+    });
+
+    return tx.crmAdRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: {
+        id: true,
+        reference: true,
+        version: true,
+        accountId: true,
+        account: { select: { id: true, descriptive_name: true, customer_id: true } },
+      },
+    });
+  });
+
+  await logAudit({
+    actorId: principal.userId,
+    actorEmail: principal.email,
+    action: 'REQUEST_ACCOUNT_CHANGED',
+    description: `${request.reference}: ${message}`,
+    targetType: 'CrmAdRequest',
+    targetId: requestId,
+    metadata: { from: request.accountId, to: accountId },
+    ipAddress: opts.ip ?? null,
+  });
+
+  return {
+    ...updated,
+    accountName: updated.account?.descriptive_name ?? null,
+  };
+}
+
+/**
  * Move a request one step, then follow any system step that comes after.
  *
  * Concurrency: the UPDATE matches on `version` as well as `id`, so two people

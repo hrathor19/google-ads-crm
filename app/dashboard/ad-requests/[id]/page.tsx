@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Send,
   Sparkles,
+  Wallet,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,7 @@ import {
   type Validation,
 } from '@/components/data/ad-copy-panel';
 import { LandingScorePanel, type LandingScoreData } from '@/components/data/landing-score-panel';
+import { AccountLinkDialog } from '@/components/data/account-link-dialog';
 import { apiSend, useApi } from '@/lib/hooks/use-api';
 import { usePermissions } from '@/components/providers/permission-provider';
 import { formatCurrency, formatDate, formatDateTime, formatRelative } from '@/lib/format';
@@ -134,6 +136,7 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
   );
 
   const [pendingTransition, setPendingTransition] = useState<string | null>(null);
+  const [linkingAccount, setLinkingAccount] = useState(false);
   const [reason, setReason] = useState('');
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
@@ -167,6 +170,31 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
     queryClient.invalidateQueries({ queryKey: ['ad-requests'] });
     queryClient.invalidateQueries({ queryKey: ['notifications'] });
   };
+
+  async function saveAccount(accountId: number | null) {
+    setBusy(true);
+    try {
+      await apiSend(`/api/ad-requests/${params.id}/account`, 'PUT', {
+        accountId,
+        expectedVersion: data?.request.version ?? null,
+      });
+      toast({
+        title: accountId === null ? 'Account unlinked' : 'Google Ads account linked',
+        description: 'Assigned campaigns now reports this request against it.',
+      });
+      setLinkingAccount(false);
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['assigned-campaigns'] });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: 'Could not change the account',
+        description: e instanceof Error ? e.message : 'Unknown error.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function runTransition(target: string, payload: TransitionPayload = {}) {
     setBusy(true);
@@ -323,6 +351,33 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
               <Link2 className="h-3 w-3" aria-hidden="true" />
               Campaign {r.linkedCampaignId}
             </Badge>
+          )}
+          {/* The account is what the reporting is read from, so say plainly
+              when there isn't one rather than leaving a silent gap. */}
+          {r.accountName ? (
+            <Badge variant="outline" className="gap-1 font-normal">
+              <Wallet className="h-3 w-3" aria-hidden="true" />
+              {r.accountName}
+            </Badge>
+          ) : (
+            <Badge
+              variant="outline"
+              className="gap-1 border-amber-500/30 bg-amber-500/10 font-normal text-amber-700 dark:text-amber-400"
+            >
+              <Wallet className="h-3 w-3" aria-hidden="true" />
+              No account linked
+            </Badge>
+          )}
+          {can('AD_REQUESTS', 'ASSIGN') && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              disabled={busy}
+              onClick={() => setLinkingAccount(true)}
+            >
+              {r.accountName ? 'Change account' : 'Link an account'}
+            </Button>
           )}
 
           <div className="ml-auto flex flex-wrap gap-2">
@@ -714,6 +769,14 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       </Tabs>
 
       {/* Reason / campaign-link dialog */}
+      <AccountLinkDialog
+        open={linkingAccount}
+        busy={busy}
+        currentAccountId={data.request.accountId}
+        onCancel={() => setLinkingAccount(false)}
+        onConfirm={saveAccount}
+      />
+
       <TransitionDialog
         target={pendingTransition}
         busy={busy}
