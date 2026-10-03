@@ -1022,7 +1022,70 @@ async function main() {
     });
     check('A default role cannot be deleted', sysDelete.status === 409, sysDelete.body?.error);
 
-    console.log('\n── Audit trail ──');
+    console.log('\n── The assistant ──');
+
+  const opsAsk = await opsSession.json('/api/assistant', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'What did we spend last month?' }),
+  });
+  check('Operations cannot use the assistant', opsAsk.status === 403, `got ${opsAsk.status}`);
+
+  const adsAsk = await adsSession.json('/api/assistant', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'What did we spend last month?' }),
+  });
+  check('The Ads team cannot either', adsAsk.status === 403, `got ${adsAsk.status}`);
+
+  const anonAsk = await new Session().json('/api/assistant', {
+    method: 'POST',
+    body: JSON.stringify({ message: 'hello' }),
+  });
+  check('An unauthenticated question is 401', anonAsk.status === 401, `got ${anonAsk.status}`);
+
+  const menu = await managerSession.json<{ available: boolean; tools: Array<{ name: string }> }>(
+    '/api/assistant'
+  );
+  check(
+    'The Manager gets a tool menu',
+    menu.status === 200 && menu.body.tools.some((t) => t.name === 'get_totals'),
+    `${menu.body.tools?.length ?? 0} tool(s), gemini available=${menu.body.available}`
+  );
+
+  const blank = await managerSession.json('/api/assistant', {
+    method: 'POST',
+    body: JSON.stringify({ message: '   ' }),
+  });
+  check('An empty question is refused', blank.status === 400, `got ${blank.status}`);
+
+  if (menu.body?.available) {
+    // A real round trip. The question is deliberately one only a tool can
+    // answer, so a model that invented a number would be visible.
+    const asked = await managerSession.json<{
+      text: string;
+      trace: Array<{ name: string; ok: boolean; summary: string }>;
+      hops: number;
+    }>('/api/assistant', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'How far back does our Google Ads data go, and when did we last sync?' }),
+    });
+    check(
+      'The Manager gets an answer',
+      asked.status === 200 && (asked.body.text ?? '').length > 20,
+      `${(asked.body?.text ?? '').slice(0, 90)}…`
+    );
+    check(
+      'And it was produced by a real tool call, not invented',
+      (asked.body.trace ?? []).some((t) => t.ok),
+      (asked.body.trace ?? []).map((t) => `${t.name}:${t.ok}`).join(', ') || 'no tool calls'
+    );
+
+    const audited = await prisma.crmAuditLog.count({ where: { action: 'ASSISTANT_QUERIED' } });
+    check('Every question is audited', audited > 0, `${audited} row(s)`);
+  } else {
+    console.log('  SKIP  Gemini is not configured; the live round trip was not exercised.');
+  }
+
+  console.log('\n── Audit trail ──');
     const audit = await admin.json<{ rows: Array<{ action: string }> }>(
       '/api/admin/audit?limit=100'
     );

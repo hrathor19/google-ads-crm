@@ -95,6 +95,17 @@ export const MODULES: ModuleDef[] = [
     actions: ['VIEW', 'GENERATE_AI'],
   },
   {
+    key: 'ASSISTANT',
+    label: 'AI Assistant',
+    description:
+      'Ask about accounts, campaigns, keywords and the request workflow in plain English. ' +
+      'Read-only, and it answers within whatever the role can already see.',
+    // VIEW, not an invented USE: every module in this catalogue declares
+    // VIEW as its baseline, the matrix renders one column per action, and a
+    // one-off verb would add a column used by a single row.
+    actions: ['VIEW'],
+  },
+  {
     key: 'SYNC',
     label: 'Data Sync',
     description: 'Trigger a manual refresh from the Google Ads API.',
@@ -212,6 +223,10 @@ export const SEED_ROLES: SeedRole[] = [
       feature('LANDING_SCORE', 'VIEW'),
       feature('AUDIT', 'VIEW'),
       feature('SYNC', 'VIEW'),
+      // The assistant answers from the same functions the dashboards use and
+      // obeys the same account scope and financial redaction, so this grants
+      // no reach the role does not already have — only a faster way to ask.
+      feature('ASSISTANT', 'VIEW'),
     ],
   },
   {

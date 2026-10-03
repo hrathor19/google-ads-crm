@@ -2,6 +2,10 @@ import { defineConfig } from 'vitest/config';
 import path from 'node:path';
 
 export default defineConfig({
+  // The components under test are TSX compiled by Next with the automatic
+  // runtime; esbuild defaults to the classic one, which expects `React` in
+  // scope and fails with "React is not defined" at render.
+  esbuild: { jsx: 'automatic' },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),

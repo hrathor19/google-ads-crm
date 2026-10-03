@@ -1,0 +1,3 @@
+-- Rollback: Postgres cannot drop an enum value in place.
+-- Recreating the type is destructive and is not worth automating; leave the
+-- value in place, or rebuild "CrmAuditAction" by hand.

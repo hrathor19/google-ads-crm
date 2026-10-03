@@ -117,6 +117,29 @@ const config: Config = {
           '0%, 100%': { transform: 'scale(1)', opacity: '0.5' },
           '50%': { transform: 'scale(1.25)', opacity: '0.85' },
         },
+        // Grows out of the launcher rather than appearing over it: the
+        // transform-origin is set on the element, so the panel reads as the
+        // button unfolding.
+        'panel-in': {
+          from: { opacity: '0', transform: 'translateY(14px) scale(0.92)' },
+          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+        'panel-out': {
+          from: { opacity: '1', transform: 'translateY(0) scale(1)' },
+          to: { opacity: '0', transform: 'translateY(10px) scale(0.95)' },
+        },
+        'bubble-in': {
+          from: { opacity: '0', transform: 'translateY(8px) scale(0.98)' },
+          to: { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+        'typing-dot': {
+          '0%, 60%, 100%': { transform: 'translateY(0)', opacity: '0.35' },
+          '30%': { transform: 'translateY(-4px)', opacity: '1' },
+        },
+        'caret-blink': {
+          '0%, 45%': { opacity: '1' },
+          '55%, 100%': { opacity: '0' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
@@ -129,6 +152,11 @@ const config: Config = {
         'shimmer-sweep': 'shimmer-sweep 3.5s ease-in-out infinite',
         'float-particle': 'float-particle 4s ease-in-out infinite',
         'pulse-glow': 'pulse-glow 2.4s ease-in-out infinite',
+        'panel-in': 'panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'panel-out': 'panel-out 0.16s cubic-bezier(0.4, 0, 1, 1) both',
+        'bubble-in': 'bubble-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'typing-dot': 'typing-dot 1.2s ease-in-out infinite',
+        'caret-blink': 'caret-blink 1s step-end infinite',
       },
       transitionTimingFunction: {
         premium: 'cubic-bezier(0.22, 1, 0.36, 1)',

@@ -919,6 +919,8 @@ export async function searchTermExplore(params: {
   minClicks?: number;
   minCost?: number;
   minCtr?: number | null;
+  /** At most this many conversions. 0 isolates spend with nothing to show. */
+  maxConversions?: number | null;
   contains?: string | null;
   sort?: 'cost' | 'clicks' | 'impressions' | 'conversions';
   limit?: number;
@@ -935,6 +937,7 @@ export async function searchTermExplore(params: {
     minClicks = 0,
     minCost = 0,
     minCtr = null,
+    maxConversions = null,
     contains = null,
     sort = 'cost',
     limit = 50,
@@ -959,6 +962,9 @@ export async function searchTermExplore(params: {
     havings.push(
       Prisma.sql`COALESCE(SUM(ss.cost_micros), 0) >= ${Math.round(minCost * MICROS)}`
     );
+  }
+  if (maxConversions != null) {
+    havings.push(Prisma.sql`COALESCE(SUM(ss.conversions), 0) <= ${maxConversions}`);
   }
   if (minCtr != null) {
     // clicks / impressions >= minCtr, expressed multiplicatively so a zero

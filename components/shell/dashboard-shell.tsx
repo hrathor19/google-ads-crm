@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { AssistantWidget } from './assistant-widget';
 import { Sidebar } from './sidebar';
 import { TopBar } from './topbar';
 
@@ -104,6 +105,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         {/* The only scrolling region on the page. */}
         <main className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">{children}</main>
       </div>
+
+      {/* In the shell, not on a route: a question about a number is asked
+          while looking at it, and because a layout does not remount between
+          pages the conversation survives navigating the dashboard. */}
+      <AssistantWidget />
     </div>
   );
 }

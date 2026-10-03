@@ -931,6 +931,7 @@ enum CrmAuditAction {
   EMAIL_SETTINGS_UPDATED
   EMAIL_TEST_SENT
   REQUEST_ACCOUNT_CHANGED
+  ASSISTANT_QUERIED
 }
 
 /// A role is a named bundle of permission toggles plus an account scope.
