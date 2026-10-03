@@ -53,6 +53,25 @@ type Payload = {
   connection: { ok: boolean; detail: string };
 };
 
+/**
+ * Why a rule can never send, when it can never send.
+ *
+ * "Only the addresses below" with an empty To is the one that bites: it
+ * looks configured, saves cleanly, and silently delivers nothing, because
+ * CC alone cannot carry a mail. The preview reports it, but only if someone
+ * thinks to preview — so the card says it outright.
+ */
+function routeProblem(r: Route): string | null {
+  if (!r.enabled) return null;
+  if (r.audience === 'FIXED' && !(r.toEmails ?? '').trim()) {
+    return 'No recipients: this rule sends only to the addresses below, and there are none. CC on its own cannot carry a mail.';
+  }
+  if (r.audience === 'ROLE' && !(r.audiencePermission ?? '').trim()) {
+    return 'No recipients: a permission is needed to work out who holds it.';
+  }
+  return null;
+}
+
 const AUDIENCE_LABELS: Record<Route['audience'], string> = {
   ROLE: 'Everyone with a permission',
   REQUESTER: 'The person who raised it',
@@ -323,6 +342,12 @@ export default function EmailSettingsPage() {
                           )}
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">{meta?.description}</p>
+                        {routeProblem(r) && (
+                          <p className="mt-1.5 inline-flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                            {routeProblem(r)}
+                          </p>
+                        )}
                       </div>
                       <Switch
                         checked={r.enabled}
