@@ -184,8 +184,14 @@ const all = (module: string) =>
 const view = (...modules: string[]) => modules.map((m) => feature(m, 'VIEW'));
 
 /**
- * The four default roles from the brief. Seeded once; a Super Admin can edit
- * their toggles afterwards, and the seed never overwrites live edits.
+ * The default roles. Seeded once; a Super Admin can edit their toggles
+ * afterwards, and the seed never overwrites live edits.
+ *
+ * Account Manager was removed along with the separate handover step: the
+ * Manager names the Ad Specialist and sets the budget in one decision, so
+ * there was no stage the role owned and nobody was ever assigned to it.
+ * Removing it here as well as from the database is what stops the next
+ * `db:seed` quietly recreating it.
  */
 export const SEED_ROLES: SeedRole[] = [
   {
@@ -245,19 +251,6 @@ export const SEED_ROLES: SeedRole[] = [
       // Manager picks the people and decides the money, so the person who
       // raised a request cannot also staff it and fund it.
       feature('AD_REQUESTS', 'APPROVE'),
-      feature('AD_COPY', 'VIEW'),
-      feature('LANDING_SCORE', 'VIEW'),
-    ],
-  },
-  {
-    slug: 'account-manager',
-    name: 'Account Manager',
-    description:
-      'Owns the account from step 3. Sees the requirement and its progress, and the ' +
-      'reporting for the accounts they are scoped to.',
-    features: [
-      ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS', 'FINANCIALS'),
-      feature('AD_REQUESTS', 'VIEW'),
       feature('AD_COPY', 'VIEW'),
       feature('LANDING_SCORE', 'VIEW'),
     ],

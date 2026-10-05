@@ -103,7 +103,7 @@ describe('the seeded roles', () => {
     );
     expect(builders.map((r) => r.slug)).toEqual(['google-ads-team']);
 
-    for (const slug of ['operations', 'manager', 'account-manager']) {
+    for (const slug of ['operations', 'manager']) {
       const role = SEED_ROLES.find((r) => r.slug === slug)!;
       expect(role.features, `${slug} should not build`).not.toContain('AD_REQUESTS:BUILD');
     }
@@ -122,26 +122,29 @@ describe('the seeded roles', () => {
   });
 
   it('gives only the Manager the power to assign people', () => {
-    // Steps 3 and 11. Ops raises the requirement; a Manager decides who
-    // staffs it. Neither the Account Manager nor the Ad Specialist can
-    // reassign the work to themselves.
+    // Ops raises the requirement; a Manager decides who staffs it and for
+    // how much. The Ad Specialist cannot reassign the work to themselves.
     const assigners = SEED_ROLES.filter(
       (r) => !r.isSuperAdmin && r.features.includes('AD_REQUESTS:ASSIGN')
     );
     expect(assigners.map((r) => r.slug)).toEqual(['manager']);
 
-    for (const slug of ['operations', 'account-manager', 'google-ads-team']) {
+    for (const slug of ['operations', 'google-ads-team']) {
       const role = SEED_ROLES.find((r) => r.slug === slug)!;
       expect(role.features, `${slug} should not assign`).not.toContain('AD_REQUESTS:ASSIGN');
     }
   });
 
-  it('gives the Account Manager read access and no power to move the request', () => {
-    const am = SEED_ROLES.find((r) => r.slug === 'account-manager')!;
-    expect(am.features).toContain('AD_REQUESTS:VIEW');
-    for (const f of ['AD_REQUESTS:APPROVE', 'AD_REQUESTS:ASSIGN', 'AD_REQUESTS:EDIT']) {
-      expect(am.features, `AM should not hold ${f}`).not.toContain(f);
-    }
+  it('no longer seeds an Account Manager role', () => {
+    // It owned no stage once assignment and budget merged into one step,
+    // and nobody was ever assigned to it. Removing it from the seed list is
+    // what stops `db:seed` recreating it after it was deleted.
+    expect(SEED_ROLES.map((r) => r.slug)).toEqual([
+      'super-admin',
+      'manager',
+      'operations',
+      'google-ads-team',
+    ]);
   });
 
   it('gives the Ads team the AI permissions and Operations none of them', () => {

@@ -156,7 +156,7 @@ describe('a tool run under a principal', () => {
     // the matrix, and the second one is what the guard reads.
     const { hasPermission } = await import('@/lib/rbac/permissions');
     const got: Record<string, boolean> = {};
-    for (const slug of ['super-admin', 'manager', 'operations', 'account-manager', 'google-ads-team']) {
+    for (const slug of ['super-admin', 'manager', 'operations', 'google-ads-team']) {
       const role = await prisma.crmRole.findUnique({ where: { slug } });
       if (!role) continue;
       got[slug] = await hasPermission(await principalFor(slug), 'ASSISTANT:VIEW');
@@ -165,7 +165,6 @@ describe('a tool run under a principal', () => {
       'super-admin': true,
       manager: true,
       operations: false,
-      'account-manager': false,
       'google-ads-team': false,
     });
   });

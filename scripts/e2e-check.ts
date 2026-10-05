@@ -218,6 +218,7 @@ async function cleanUpFixtures(): Promise<void> {
     'e2e.ops@kollegeapply.com',
     'e2e.manager@kollegeapply.com',
     'e2e.ads@kollegeapply.com',
+    'e2e.admin@kollegeapply.com',
     'e2e.accountmanager@example.com',
     'e2e.pending-password@example.com',
     'e2e.exporter-no-money@example.com',
@@ -251,6 +252,11 @@ async function main() {
   const ops = await ensureUser('e2e.ops@kollegeapply.com', 'E2E Operations', 'operations');
   const manager = await ensureUser('e2e.manager@kollegeapply.com', 'E2E Manager', 'manager');
   const adsTeam = await ensureUser('e2e.ads@kollegeapply.com', 'E2E Ads Team', 'google-ads-team');
+  const superAdmin = await ensureUser(
+    'e2e.admin@kollegeapply.com',
+    'E2E Super Admin',
+    'super-admin'
+  );
 
   const opsSession = new Session();
   const managerSession = new Session();
@@ -929,12 +935,14 @@ async function main() {
 
   console.log('\n── Custom role: create, toggle, assign, verify ──');
 
+  // A fixture Super Admin, like the three personas above, rather than the
+  // live seeded account. Borrowing that one meant the suite broke the moment
+  // somebody cleaned up users — which is a thing a Super Admin is entitled
+  // to do, and exactly the dependency the note above these helpers warns
+  // against.
   const admin = new Session();
-  const adminOk = await admin.login(
-    process.env.SEED_ADMIN_EMAIL ?? '',
-    process.env.SEED_ADMIN_PASSWORD ?? ''
-  );
-  check('Super Admin can sign in', adminOk);
+  const adminOk = await admin.login(superAdmin.email, TEST_PASSWORD);
+  check('Super Admin can sign in', adminOk, superAdmin.email);
 
   if (adminOk) {
     // Start clean so a re-run does not trip the duplicate-name guard.
@@ -1019,7 +1027,7 @@ async function main() {
   check('Operations cannot preview the mail routing', opsPreview.status === 403, `got ${opsPreview.status}`);
 
   const adminMail = new Session();
-  await adminMail.login(process.env.SEED_ADMIN_EMAIL ?? '', process.env.SEED_ADMIN_PASSWORD ?? '');
+  await adminMail.login(superAdmin.email, TEST_PASSWORD);
 
   // Only the events, not who they go to. Which audience each route uses is
   // configuration a Super Admin is entitled to change on the Email page, and

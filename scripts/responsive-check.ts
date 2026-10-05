@@ -8,6 +8,9 @@
  * that cannot be opened, and touch targets too small to hit.
  */
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
+import bcrypt from 'bcryptjs';
+import { PrismaClient } from '@prisma/client';
+import { ALL_FEATURES, SEED_ROLES } from '@/lib/rbac/features';
 
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3000';
 const CHROME =
@@ -55,13 +58,67 @@ function check(name: string, ok: boolean, detail = '') {
   }
 }
 
+const prisma = new PrismaClient();
+
+/** A disposable Super Admin, so the sweep owns its own way in. */
+const FIXTURE_EMAIL = 'responsive.check@kollegeapply.com';
+const FIXTURE_PASSWORD = 'R3sponsiveCheck!';
+
+/**
+ * Create the account this sweep signs in with.
+ *
+ * It used to borrow SEED_ADMIN_EMAIL, which meant every page check failed
+ * the moment somebody cleaned up users — 68 failures that said nothing about
+ * layout. A fixture of its own cannot be taken away by using the product.
+ */
+async function ensureFixtureUser() {
+  const def = SEED_ROLES.find((r) => r.slug === 'super-admin')!;
+  const role = await prisma.crmRole.upsert({
+    where: { slug: 'responsive-check' },
+    create: {
+      slug: 'responsive-check',
+      name: 'Responsive Check',
+      description: 'Disposable fixture for the responsive sweep.',
+      isSystem: false,
+      isSuperAdmin: true,
+      allAccounts: true,
+    },
+    update: { isSuperAdmin: true },
+  });
+  const granted = new Set(def.features);
+  await prisma.crmRolePermission.deleteMany({ where: { roleId: role.id } });
+  await prisma.crmRolePermission.createMany({
+    data: ALL_FEATURES.map((feature) => ({ roleId: role.id, feature, allowed: granted.has(feature) })),
+  });
+
+  const password = await bcrypt.hash(FIXTURE_PASSWORD, 10);
+  await prisma.crmUser.upsert({
+    where: { email: FIXTURE_EMAIL },
+    create: {
+      email: FIXTURE_EMAIL,
+      name: 'Responsive Check',
+      password,
+      roleId: role.id,
+      isActive: true,
+      mustChangePassword: false,
+      allAccounts: true,
+    },
+    update: { password, roleId: role.id, isActive: true, mustChangePassword: false },
+  });
+}
+
+async function removeFixtureUser() {
+  await prisma.crmUser.deleteMany({ where: { email: FIXTURE_EMAIL } });
+  await prisma.crmRole.deleteMany({ where: { slug: 'responsive-check' } });
+}
+
 async function signIn(page: Page) {
   // A cold dev server compiles the route on first request, which can outrun a
   // single navigation timeout. Warm it, then drive the form.
   await page.goto(`${BASE}/login`, { waitUntil: 'networkidle2', timeout: 120_000 });
   await page.waitForSelector('#email', { timeout: 60_000 });
-  await page.type('#email', process.env.SEED_ADMIN_EMAIL ?? '');
-  await page.type('#password', process.env.SEED_ADMIN_PASSWORD ?? '');
+  await page.type('#email', FIXTURE_EMAIL);
+  await page.type('#password', FIXTURE_PASSWORD);
   await page.click('button[type="submit"]');
 
   // The credentials provider signs in over fetch and then routes client-side,
@@ -75,6 +132,7 @@ async function signIn(page: Page) {
 
 async function main() {
   let browser: Browser | undefined;
+  await ensureFixtureUser();
   try {
     browser = await puppeteer.launch({
       executablePath: CHROME,
@@ -278,6 +336,8 @@ async function main() {
     check('dark mode repaints the page', dark.ok, dark.reason);
   } finally {
     await browser?.close();
+    await removeFixtureUser();
+    await prisma.$disconnect();
   }
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
