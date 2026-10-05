@@ -72,7 +72,7 @@ export default function EditAdRequestPage({ params }: { params: { id: string } }
           </Button>
         }
       />
-      <div className="max-w-3xl">
+      <div className="max-w-6xl">
         {isLoading || !data ? (
           <div className="space-y-4">
             <Skeleton className="h-96 w-full rounded-xl" />

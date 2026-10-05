@@ -34,7 +34,7 @@ export default function NewAdRequestPage() {
           </Button>
         }
       />
-      <div className="max-w-3xl">
+      <div className="max-w-6xl">
         <AdRequestForm />
       </div>
     </>

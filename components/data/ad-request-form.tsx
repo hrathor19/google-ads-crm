@@ -244,11 +244,11 @@ export function AdRequestForm({
   const ageRestriction = watch('ageRestriction');
 
   return (
-    <form className="space-y-4" noValidate>
+    <form className="space-y-3" noValidate>
       <fieldset
         disabled={readOnly}
         className={cn(
-          'm-0 min-w-0 space-y-4 border-0 p-0',
+          'm-0 min-w-0 space-y-3 border-0 p-0',
           readOnly && [
             // Legible, not greyed out: a washed-out form is the right
             // affordance for "you cannot type here" and the wrong one for
@@ -264,13 +264,13 @@ export function AdRequestForm({
       >
       {/* ── Campaign ──────────────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Campaign</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs">
             What is being activated, and for whom. The Google Ads team builds from this.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="grid gap-x-4 gap-y-3 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="trackingId" label="New tracking ID" error={errors.trackingId?.message}>
             <Input id="trackingId" placeholder="13000047" {...register('trackingId')} />
           </Field>
@@ -309,14 +309,14 @@ export function AdRequestForm({
 
       {/* ── Targets ───────────────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Targets</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs">
             Budget and CPL are optional here — Ops applies them at the budget stage, which is why
             the sheet leaves them blank at submission.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <CardContent className="grid gap-x-4 gap-y-3 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="requiredLeads" label="Required leads" error={errors.requiredLeads?.message}>
             <Input id="requiredLeads" inputMode="numeric" placeholder="100" {...register('requiredLeads')} />
           </Field>
@@ -347,10 +347,10 @@ export function AdRequestForm({
 
       {/* ── Dates ─────────────────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Dates</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <CardContent className="grid gap-x-4 gap-y-3 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="startDate" label="Client onboarding date" error={errors.startDate?.message}>
             <Input id="startDate" type="date" {...register('startDate')} />
           </Field>
@@ -370,10 +370,10 @@ export function AdRequestForm({
 
       {/* ── Targeting ─────────────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Targeting</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="grid gap-x-4 gap-y-3 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="ageRestriction" label="Age restriction" error={errors.ageRestriction?.message}>
             <Select
               value={ageRestriction ?? 'OPEN'}
@@ -426,14 +426,14 @@ export function AdRequestForm({
 
       {/* ── Destination URLs ──────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Ads URLs</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs">
             At least one is required. The first one present is the page we score and write ad copy
             against, client pages first.
           </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="grid gap-x-4 gap-y-3 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-3">
           {URL_FIELDS.map(([name, label]) => (
             <Field key={name} id={name} label={label} error={errors[name]?.message}>
               <Input id={name} placeholder="https://" {...register(name)} />
@@ -444,13 +444,13 @@ export function AdRequestForm({
 
       {/* ── Monthly lead plan ─────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Monthly lead plan</CardTitle>
-          <CardDescription>
+          <CardDescription className="text-xs">
             Optional. How the required leads are expected to land month by month.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 px-4 pb-4">
           {months.fields.length === 0 && (
             <p className="text-sm text-muted-foreground">No months added yet.</p>
           )}
@@ -521,10 +521,10 @@ export function AdRequestForm({
 
       {/* ── Notes ─────────────────────────────────────────────────────── */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="px-4 pb-2 pt-4">
           <CardTitle className="text-base">Keywords and remarks</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4">
+        <CardContent className="grid gap-x-4 gap-y-3 px-4 pb-4">
           <Field id="notes" label="Remarks" error={errors.notes?.message}>
             <Textarea
               id="notes"
@@ -583,7 +583,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className={`space-y-1.5 ${className ?? ''}`}>
+    <div className={`space-y-1 ${className ?? ''}`}>
       {label ? <Label htmlFor={id}>{label}</Label> : null}
       {children}
       {error ? (
