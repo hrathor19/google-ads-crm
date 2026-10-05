@@ -105,27 +105,35 @@ describe('the table itself', () => {
         }
       }
     }
-    const unreachable = ALL_STATUSES.filter((s) => !seen.has(s));
+    // Retired states are unreachable on purpose: nothing moves to
+    // BUDGET_APPROVED or ACCOUNT_ASSIGNED since the budget moved to the
+    // assignment step. They remain as origins so a request already in one
+    // can still finish, which the "stranded" test below covers.
+    const RETIRED: AdRequestStatus[] = ['BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'];
+    const unreachable = ALL_STATUSES.filter((s) => !seen.has(s) && !RETIRED.includes(s));
     expect(unreachable).toEqual([]);
+    for (const s of RETIRED) {
+      expect(nextStates(s).length, `${s} has no way out`).toBeGreaterThan(0);
+    }
   });
 
   it('numbers each step the way the flow diagram does', () => {
     expect(STATUS_STEP.SUBMITTED).toBe(1);
     expect(STATUS_STEP.UNDER_REVIEW).toBe(6);
-    expect(STATUS_STEP.BUDGET_APPROVED).toBe(10);
-    expect(STATUS_STEP.COMPLETED).toBe(13);
+    expect(STATUS_STEP.REVIEW_APPROVED).toBe(8);
+    expect(STATUS_STEP.COMPLETED).toBe(10);
   });
 });
 
-describe('the thirteen steps, in order', () => {
+describe('the steps, in order', () => {
   const happyPath: Array<[AdRequestStatus, AdRequestStatus]> = [
     ['DRAFT', 'SUBMITTED'],
     ['AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED'],
     ['AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED'],
     ['UNDER_REVIEW', 'REVIEW_APPROVED'],
-    ['REVIEW_APPROVED', 'BUDGET_APPROVED'],
-    ['BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'],
-    ['ACCOUNT_ASSIGNED', 'LIVE'],
+    // Straight to live: the budget is agreed at assignment, so there is no
+    // separate funding step and no second handover of the same person.
+    ['REVIEW_APPROVED', 'LIVE'],
     ['LIVE', 'COMPLETED'],
   ];
 
@@ -154,11 +162,9 @@ describe('the thirteen steps, in order', () => {
     expect(findTransition('UNDER_REVIEW', 'REVIEW_APPROVED')?.actor).toBe('OPS');
 
     expect(findTransition('AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED')?.actor).toBe('MANAGER');
-    expect(findTransition('REVIEW_APPROVED', 'BUDGET_APPROVED')?.actor).toBe('MANAGER');
-    expect(findTransition('BUDGET_APPROVED', 'ACCOUNT_ASSIGNED')?.actor).toBe('MANAGER');
 
     expect(findTransition('AWAITING_AD_SUBMISSION', 'ADS_SUBMITTED')?.actor).toBe('AD_SPECIALIST');
-    expect(findTransition('ACCOUNT_ASSIGNED', 'LIVE')?.actor).toBe('AD_SPECIALIST');
+    expect(findTransition('REVIEW_APPROVED', 'LIVE')?.actor).toBe('AD_SPECIALIST');
     expect(findTransition('LIVE', 'COMPLETED')?.actor).toBe('AD_SPECIALIST');
   });
 
@@ -184,20 +190,21 @@ describe('the thirteen steps, in order', () => {
     if (!r.ok) expect(r.message).toMatch(/AD_REQUESTS:BUILD/);
   });
 
-  it('puts the budget behind its own permission, not APPROVE', () => {
-    // Otherwise signing off the copy would also let someone commit the spend.
-    expect(findTransition('REVIEW_APPROVED', 'BUDGET_APPROVED')?.permission).toBe(
-      'AD_REQUESTS:BUDGET'
+  it('keeps signing off the copy separate from staffing and funding', () => {
+    // Approving the keywords is Ops' call; deciding who builds it and for
+    // how much is the Manager's, behind ASSIGN.
+    expect(findTransition('AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED')?.permission).toBe(
+      'AD_REQUESTS:ASSIGN'
     );
     expect(findTransition('UNDER_REVIEW', 'REVIEW_APPROVED')?.permission).toBe(
       'AD_REQUESTS:APPROVE'
     );
   });
 
-  it('refuses the budget step to someone who only holds APPROVE', () => {
+  it('refuses assignment to someone who only holds APPROVE', () => {
     const r = evaluate({
-      from: 'REVIEW_APPROVED',
-      to: 'BUDGET_APPROVED',
+      from: 'AWAITING_AM_ASSIGNMENT',
+      to: 'AM_ASSIGNED',
       isOwner: false,
       isSuperAdmin: false,
       hasPermission: (f) => f === 'AD_REQUESTS:APPROVE',
@@ -206,25 +213,7 @@ describe('the thirteen steps, in order', () => {
     expect(r.ok).toBe(false);
     if (!r.ok) {
       expect(r.code).toBe('FORBIDDEN');
-      expect(r.message).toMatch(/AD_REQUESTS:BUDGET/);
-    }
-  });
-
-  it('refuses assignment to someone who only holds APPROVE', () => {
-    for (const [from, to] of [
-      ['AWAITING_AM_ASSIGNMENT', 'AM_ASSIGNED'],
-      ['BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'],
-    ] as Array<[AdRequestStatus, AdRequestStatus]>) {
-      const r = evaluate({
-        from,
-        to,
-        isOwner: false,
-        isSuperAdmin: false,
-        hasPermission: (f) => f === 'AD_REQUESTS:APPROVE',
-        provided: complete,
-      });
-      expect(r.ok, `${from} -> ${to}`).toBe(false);
-      if (!r.ok) expect(r.code).toBe('FORBIDDEN');
+      expect(r.message).toMatch(/AD_REQUESTS:ASSIGN/);
     }
   });
 });
@@ -270,10 +259,10 @@ describe('requirements', () => {
     if (!r.ok) expect(r.message).toMatch(/Ad Specialist/i);
   });
 
-  it('will not hand over the account without an Ad Specialist', () => {
+  it('will not assign without an Ad Specialist', () => {
     const r = evaluate({
-      from: 'BUDGET_APPROVED',
-      to: 'ACCOUNT_ASSIGNED',
+      from: 'AWAITING_AM_ASSIGNMENT',
+      to: 'AM_ASSIGNED',
       ...god,
       provided: { ...complete, adSpecialistId: null },
     });
@@ -286,10 +275,12 @@ describe('requirements', () => {
     [0, 2500, /budget above zero/i],
     [250000, null, /CPL/i],
     [250000, 0, /CPL/i],
-  ])('refuses budget approval with budget=%s cpl=%s', (budget, requiredCpl, expected) => {
+  ])('refuses assignment with budget=%s cpl=%s', (budget, requiredCpl, expected) => {
+    // The money is settled at assignment now, so this is where the figures
+    // are demanded — not after the copy has already been written.
     const r = evaluate({
-      from: 'REVIEW_APPROVED',
-      to: 'BUDGET_APPROVED',
+      from: 'AWAITING_AM_ASSIGNMENT',
+      to: 'AM_ASSIGNED',
       ...god,
       provided: { ...complete, budget, requiredCpl },
     });
@@ -299,7 +290,7 @@ describe('requirements', () => {
 
   it('will not go live with no campaign at all', () => {
     const r = evaluate({
-      from: 'ACCOUNT_ASSIGNED',
+      from: 'REVIEW_APPROVED',
       to: 'LIVE',
       ...god,
       provided: { ...complete, linkedCampaignId: '', linkedCampaignCount: 0 },
@@ -312,7 +303,7 @@ describe('requirements', () => {
     // Picking campaigns from the list is how they are linked now; the
     // hand-typed id is only the fallback for a request that predates it.
     const r = evaluate({
-      from: 'ACCOUNT_ASSIGNED',
+      from: 'REVIEW_APPROVED',
       to: 'LIVE',
       ...god,
       provided: { ...complete, linkedCampaignId: '', linkedCampaignCount: 3 },
@@ -322,7 +313,7 @@ describe('requirements', () => {
 
   it('still goes live on the legacy typed id alone', () => {
     const r = evaluate({
-      from: 'ACCOUNT_ASSIGNED',
+      from: 'REVIEW_APPROVED',
       to: 'LIVE',
       ...god,
       provided: { ...complete, linkedCampaignId: '21345678901', linkedCampaignCount: 0 },
@@ -361,7 +352,7 @@ describe('illegal moves', () => {
     ['DRAFT', 'COMPLETED'],
     ['SUBMITTED', 'BUDGET_APPROVED'],
     ['UNDER_REVIEW', 'LIVE'],
-    ['REVIEW_APPROVED', 'ACCOUNT_ASSIGNED'],
+    ['AWAITING_AM_ASSIGNMENT', 'LIVE'],
     ['COMPLETED', 'LIVE'],
     ['REJECTED', 'COMPLETED'],
     ['LIVE', 'UNDER_REVIEW'],
@@ -371,9 +362,16 @@ describe('illegal moves', () => {
     if (!r.ok) expect(r.code).toBe('ILLEGAL');
   });
 
-  it('refuses skipping the budget step', () => {
-    expect(move('REVIEW_APPROVED', 'ACCOUNT_ASSIGNED').ok).toBe(false);
-    expect(move('REVIEW_APPROVED', 'LIVE').ok).toBe(false);
+  it('refuses launching before the review has passed', () => {
+    expect(move('AWAITING_AD_SUBMISSION', 'LIVE').ok).toBe(false);
+    expect(move('UNDER_REVIEW', 'LIVE').ok).toBe(false);
+  });
+
+  it('still lets a request stranded in a retired state reach live', () => {
+    // Nothing moves *to* these any more, but AR-0002 and AR-0004 were
+    // already sitting in them when the flow changed.
+    expect(move('BUDGET_APPROVED', 'LIVE').ok).toBe(true);
+    expect(move('ACCOUNT_ASSIGNED', 'LIVE').ok).toBe(true);
   });
 
   it('cannot move out of a terminal state', () => {
@@ -447,7 +445,15 @@ describe('authorisation', () => {
 describe('the specialist queue', () => {
   it('holds exactly the states waiting on the Ad Specialist', () => {
     expect(SPECIALIST_QUEUE.sort()).toEqual(
-      ['ACCOUNT_ASSIGNED', 'AWAITING_AD_SUBMISSION', 'LIVE', 'RECHECK_REQUESTED'].sort()
+      [
+        'AWAITING_AD_SUBMISSION',
+        'RECHECK_REQUESTED',
+        'REVIEW_APPROVED',
+        'LIVE',
+        // Retired, but a request can still be waiting in one.
+        'BUDGET_APPROVED',
+        'ACCOUNT_ASSIGNED',
+      ].sort()
     );
   });
 });

@@ -38,20 +38,20 @@ export const EMAIL_EVENTS: Array<{
   },
   {
     event: 'REQUEST_SPECIALIST_ASSIGNED',
-    label: '2a. Ad Specialist assigned',
+    label: '2. Assigned, with the budget and CPL',
     description:
-      'A Manager put somebody on it. Goes to that one person — not everyone who could have been picked.',
+      'A Manager put somebody on it and set the money. The brief now carries the Budget and Required CPL — this is the one to build against. Goes to that one person, not everyone who could have been picked.',
     step: 'Step 3',
     defaultAudience: 'AD_SPECIALIST',
     defaultPermission: null,
-    defaultSubject: '{{title}} — assigned to you',
+    defaultSubject: '{{title}} — assigned to you, with budget and CPL',
   },
   {
     event: 'REQUEST_BUDGET_APPROVED',
-    label: '2b. Budget and CPL set',
+    label: 'Budget and CPL set (retired)',
     description:
-      'The Manager approved the spend. The same brief again, now carrying the Budget and Required CPL — this is the one to build against.',
-    step: 'Step 10',
+      'Was a separate step after the review. The budget is now agreed at assignment, so nothing reaches this any more — it stays only for requests that were already past it.',
+    step: 'Retired',
     defaultAudience: 'AD_SPECIALIST',
     defaultPermission: null,
     defaultSubject: '{{title}} — budget and CPL approved',
@@ -69,8 +69,8 @@ export const EMAIL_EVENTS: Array<{
   {
     event: 'REQUEST_APPROVED',
     label: '4. Review approved',
-    description: 'The review passed. The Ad Specialist can proceed.',
-    step: 'Step 9',
+    description: 'The review passed. The Ad Specialist can take it live.',
+    step: 'Step 8',
     defaultAudience: 'AD_SPECIALIST',
     defaultPermission: null,
     defaultSubject: '{{title}} — review approved',
@@ -79,7 +79,7 @@ export const EMAIL_EVENTS: Array<{
     event: 'REQUEST_LIVE',
     label: '5. Campaign live',
     description: 'The campaigns are running. Goes to everyone who has been following the request.',
-    step: 'Step 12',
+    step: 'Step 9',
     defaultAudience: 'ROLE',
     defaultPermission: 'AD_REQUESTS:VIEW',
     defaultSubject: '{{title}} — live',
@@ -120,7 +120,10 @@ export const EMAIL_EVENTS: Array<{
 ];
 
 /** Events switched off until somebody turns them on. */
-const OFF_BY_DEFAULT = new Set<CrmNotificationType>(['REQUEST_COMMENTED']);
+const OFF_BY_DEFAULT = new Set<CrmNotificationType>([
+  'REQUEST_COMMENTED',
+  'REQUEST_BUDGET_APPROVED',
+]);
 
 export type EmailSettings = {
   enabled: boolean;

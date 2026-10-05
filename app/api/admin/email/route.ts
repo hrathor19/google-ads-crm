@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { clientIp, handle, parseBody, prisma, requirePermission } from '@/lib/api';
+import { badRequest, clientIp, handle, parseBody, prisma, requirePermission } from '@/lib/api';
 import { logAudit } from '@/lib/audit';
 import { testBrevoConnection } from '@/lib/email/brevo';
 import {
@@ -113,6 +113,27 @@ export async function PUT(req: Request) {
   return handle(async () => {
     const principal = await requirePermission('INTEGRATIONS', 'MANAGE');
     const body = await parseBody(req, settingsSchema);
+
+    // Refused, not warned about. A rule set to "only the addresses below"
+    // with nothing below it saves cleanly, looks configured, and silently
+    // delivers nothing — which is precisely how the "requirement raised"
+    // mail stopped going out without anyone noticing for two days. If the
+    // intent is to stop that notification, switching the rule off says so.
+    for (const r of body.routes ?? []) {
+      if (!r.enabled) continue;
+      if (r.audience === 'FIXED' && !(r.toEmails ?? '').trim()) {
+        throw badRequest(
+          `"${r.event}" is set to send only to the addresses below, but there are none. ` +
+            'Add a To address, pick a different audience, or switch the rule off. ' +
+            'CC on its own cannot carry a mail.'
+        );
+      }
+      if (r.audience === 'ROLE' && !(r.audiencePermission ?? '').trim()) {
+        throw badRequest(
+          `"${r.event}" sends to everyone holding a permission, but no permission is set.`
+        );
+      }
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.crmEmailSetting.upsert({

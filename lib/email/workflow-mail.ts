@@ -23,10 +23,13 @@ import { sendEventEmail, type EventContext } from './send';
  */
 const MAIL_FOR_STATUS: Partial<Record<AdRequestStatus, CrmNotificationType>> = {
   SUBMITTED: 'REQUEST_SUBMITTED',
+  // Carries the budget and CPL now, because they are set at this step.
   AM_ASSIGNED: 'REQUEST_SPECIALIST_ASSIGNED',
   ADS_SUBMITTED: 'REQUEST_ADS_SUBMITTED',
   RECHECK_REQUESTED: 'REQUEST_CHANGES_REQUESTED',
   REVIEW_APPROVED: 'REQUEST_APPROVED',
+  // Retired: nothing moves to BUDGET_APPROVED any more. Mapped so a request
+  // that was already there when the flow changed still mails on its way out.
   BUDGET_APPROVED: 'REQUEST_BUDGET_APPROVED',
   LIVE: 'REQUEST_LIVE',
   REJECTED: 'REQUEST_REJECTED',

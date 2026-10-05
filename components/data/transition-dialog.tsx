@@ -69,32 +69,25 @@ const STEP_CONFIG: Record<
   }
 > = {
   AM_ASSIGNED: {
-    title: 'Assign the Ad Specialist',
+    title: 'Assign the work',
     description:
-      'They build the campaign and send the keywords and ad copy back for approval.',
+      'Name the Ad Specialist and the money they build against. They receive all of ' +
+      'it in one mail and start from there.',
     assign: {
       // BUILD, not VIEW or EDIT: those filled the list with managers and ops
       // staff, who can read or edit a brief but are not the people who build
-      // campaigns. BUILD is exactly what steps 5, 12 and 13 require.
+      // campaigns. BUILD is exactly what the build steps require.
       field: 'adSpecialistId',
       permission: 'AD_REQUESTS:BUILD',
       label: 'Ad Specialist',
     },
     offersAccount: true,
+    // Asked here rather than after the review: the Ad Specialist cannot
+    // sensibly build without knowing the budget and the CPL they are
+    // building to.
+    needsBudget: true,
     confirmLabel: 'Assign',
-  },
-  ACCOUNT_ASSIGNED: {
-    title: 'Hand over the full account',
-    description:
-      'The budget is approved. Confirm the Ad Specialist, or pick a different one, for the ' +
-      'full handover before launch.',
-    assign: {
-      field: 'adSpecialistId',
-      permission: 'AD_REQUESTS:BUILD',
-      label: 'Ad Specialist',
-    },
-    offersAccount: true,
-    confirmLabel: 'Assign the account',
+    confirmNote: 'Check both figures. The Ad Specialist builds against them.',
   },
   RECHECK_REQUESTED: {
     title: 'Send back for a recheck',
@@ -109,13 +102,7 @@ const STEP_CONFIG: Record<
     confirmLabel: 'Reject',
     destructive: true,
   },
-  BUDGET_APPROVED: {
-    title: 'Apply the budget and CPL',
-    description: 'This is the spend the campaign will run against. A Manager decision.',
-    needsBudget: true,
-    confirmLabel: 'Approve the budget',
-    confirmNote: 'Check both figures. The Ad Specialist builds against them.',
-  },
+
   LIVE: {
     title: 'Mark the campaign live',
     description: 'Link the Google Ads campaign you created, so the two stay connected.',

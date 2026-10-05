@@ -8,7 +8,7 @@ export const REQUEST_STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Draft',
   SUBMITTED: 'Submitted',
   AWAITING_AM_ASSIGNMENT: 'Awaiting assignment',
-  AM_ASSIGNED: 'Ad Specialist assigned',
+  AM_ASSIGNED: 'Assigned, with budget',
   AWAITING_AD_SUBMISSION: 'Awaiting ad submission',
   ADS_SUBMITTED: 'Ads submitted',
   UNDER_REVIEW: 'Under review',
@@ -34,10 +34,12 @@ export const REQUEST_STATUS_LABELS: Record<string, string> = {
  */
 export const REQUEST_ACTION_LABELS: Record<string, string> = {
   SUBMITTED: 'Submit',
-  AM_ASSIGNED: 'Assign the Ad Specialist',
+  AM_ASSIGNED: 'Assign with budget and CPL',
   ADS_SUBMITTED: 'Submit keywords and ad copy',
   RECHECK_REQUESTED: 'Request a recheck',
   REVIEW_APPROVED: 'Approve the review',
+  // Retired steps. Nothing moves to them any more; the labels remain for
+  // requests that were already in one when the flow changed.
   BUDGET_APPROVED: 'Apply budget and CPL',
   ACCOUNT_ASSIGNED: 'Hand over the full account',
   LIVE: 'Mark live',

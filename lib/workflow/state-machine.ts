@@ -71,8 +71,12 @@ export const TRANSITIONS: Transition[] = [
     to: 'AM_ASSIGNED',
     actor: 'MANAGER',
     permission: 'AD_REQUESTS:ASSIGN',
-    requires: ['AD_SPECIALIST'],
-    label: 'assigned the Ad Specialist',
+    // Both, in one decision. Naming the person and funding the work is a
+    // single act for the Manager, and splitting them meant the Ad Specialist
+    // spent the build with no budget to build against — they found out what
+    // they were spending only after the copy had been written and reviewed.
+    requires: ['AD_SPECIALIST', 'BUDGET_AND_CPL'],
+    label: 'assigned the Ad Specialist with the budget and CPL',
     autoAdvanceTo: 'AWAITING_AD_SUBMISSION',
   },
 
@@ -106,31 +110,16 @@ export const TRANSITIONS: Transition[] = [
     label: 'approved the review',
   },
 
-  // 10. The Manager applies the budget and CPL. Its own permission, not
-  // APPROVE: Ops signs off the keywords and copy at step 9, and that is a
-  // different decision from committing the spend.
+  // 10. The Ad Specialist launches. Straight from the approved review: the
+  // budget was agreed at assignment, and the separate "hand over the full
+  // account" step asked a Manager to pick the same person a second time,
+  // which read as though the first assignment had not taken.
+  //
+  // BUDGET_APPROVED and ACCOUNT_ASSIGNED stay as origins so the requests
+  // already sitting in them are not stranded mid-flight. Nothing moves *to*
+  // them any more.
   {
-    from: ['REVIEW_APPROVED'],
-    to: 'BUDGET_APPROVED',
-    actor: 'MANAGER',
-    permission: 'AD_REQUESTS:BUDGET',
-    requires: ['BUDGET_AND_CPL'],
-    label: 'applied the budget and CPL',
-  },
-
-  // 11. A Manager hands the account to an Ad Specialist in full.
-  {
-    from: ['BUDGET_APPROVED'],
-    to: 'ACCOUNT_ASSIGNED',
-    actor: 'MANAGER',
-    permission: 'AD_REQUESTS:ASSIGN',
-    requires: ['AD_SPECIALIST'],
-    label: 'assigned the account to the Ad Specialist',
-  },
-
-  // 12. The Ad Specialist launches on the ad platform.
-  {
-    from: ['ACCOUNT_ASSIGNED'],
+    from: ['REVIEW_APPROVED', 'BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'],
     to: 'LIVE',
     actor: 'AD_SPECIALIST',
     permission: 'AD_REQUESTS:BUILD',
@@ -197,17 +186,21 @@ export const STATUS_STEP: Partial<Record<AdRequestStatus, number>> = {
   ADS_SUBMITTED: 5,
   UNDER_REVIEW: 6,
   RECHECK_REQUESTED: 7,
-  REVIEW_APPROVED: 9,
-  BUDGET_APPROVED: 10,
-  ACCOUNT_ASSIGNED: 11,
-  LIVE: 12,
-  COMPLETED: 13,
+  REVIEW_APPROVED: 8,
+  LIVE: 9,
+  COMPLETED: 10,
+  // Retired from the forward path; a request can still be sitting in one.
+  BUDGET_APPROVED: 8,
+  ACCOUNT_ASSIGNED: 8,
 };
 
 /** Statuses the Ad Specialist's queue is built from. */
 export const SPECIALIST_QUEUE: AdRequestStatus[] = [
   'AWAITING_AD_SUBMISSION',
   'RECHECK_REQUESTED',
+  'REVIEW_APPROVED',
+  // Retired states, kept so a request mid-flight still shows in the queue.
+  'BUDGET_APPROVED',
   'ACCOUNT_ASSIGNED',
   'LIVE',
 ];

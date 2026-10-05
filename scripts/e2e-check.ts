@@ -393,7 +393,10 @@ async function main() {
 
   const opsCannotAssign = await opsSession.json<{ error: string }>(
     `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED', adSpecialistId: amUser.id }) }
+    {
+      method: 'POST',
+      body: JSON.stringify({ target: 'AM_ASSIGNED', adSpecialistId: amUser.id, budget: 250000, requiredCpl: 2500 }),
+    }
   );
   check(
     'Operations cannot assign anyone',
@@ -401,14 +404,35 @@ async function main() {
     `got ${opsCannotAssign.status}`
   );
 
-  const amAssigned = await managerSession.json<{ status: string }>(
+  // The money is settled here, with the person. Assigning somebody and
+  // leaving them to build with no budget was the complaint that moved it.
+  const noBudget = await managerSession.json<{ error: string }>(
     `/api/ad-requests/${requestId}/transition`,
     { method: 'POST', body: JSON.stringify({ target: 'AM_ASSIGNED', adSpecialistId: amUser.id }) }
   );
+  check('Assigning without a budget and CPL is refused', noBudget.status === 400, noBudget.body?.error);
+
+  const amAssigned = await managerSession.json<{ status: string }>(
+    `/api/ad-requests/${requestId}/transition`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ target: 'AM_ASSIGNED', adSpecialistId: amUser.id, budget: 250000, requiredCpl: 2500 }),
+    }
+  );
   check(
-    'The Manager assigns the Ad Specialist, and the system advances to awaiting ads',
+    'The Manager assigns the Ad Specialist with the budget, and the system advances to awaiting ads',
     amAssigned.status === 200 && amAssigned.body.status === 'AWAITING_AD_SUBMISSION',
     `got ${amAssigned.body?.status}`
+  );
+
+  const funded = await prisma.crmAdRequest.findUniqueOrThrow({
+    where: { id: requestId },
+    select: { budget: true, requiredCpl: true },
+  });
+  check(
+    'The budget and CPL are on the request from the assignment onwards',
+    Number(funded.budget) === 250000 && Number(funded.requiredCpl) === 2500,
+    `budget=${funded.budget}, cpl=${funded.requiredCpl}`
   );
 
   console.log('\n── Workflow: steps 5-8, submission and the recheck loop ──');
@@ -444,7 +468,7 @@ async function main() {
     check(`Round ${round} is resubmitted and back under review`, again.status === 200 && again.body.status === 'UNDER_REVIEW');
   }
 
-  console.log('\n── Workflow: steps 9-13, budget to live ──');
+  console.log('\n── Workflow: review to live ──');
 
   const reviewApproved = await opsSession.json<{ status: string }>(
     `/api/ad-requests/${requestId}/transition`,
@@ -452,31 +476,20 @@ async function main() {
   );
   check('Ops approves the review', reviewApproved.status === 200 && reviewApproved.body.status === 'REVIEW_APPROVED');
 
-  const opsCannotBudget = await opsSession.json<{ error: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED', budget: 250000, requiredCpl: 2500 }) }
-  );
-  check(
-    'Operations cannot set the budget, even though it approved the copy',
-    opsCannotBudget.status === 403,
-    `got ${opsCannotBudget.status}`
-  );
+  // The funding step and the second handover are gone: the budget was
+  // settled at assignment and the Specialist was named there, so asking a
+  // Manager to pick the same person again read as if it had not taken.
+  for (const retired of ['BUDGET_APPROVED', 'ACCOUNT_ASSIGNED'] as const) {
+    const gone = await managerSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/transition`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ target: retired, adSpecialistId: adsTeam.id, budget: 250000, requiredCpl: 2500 }),
+      }
+    );
+    check(`${retired} is no longer a step anything moves to`, gone.status === 409, `got ${gone.status}`);
+  }
 
-  const noBudget = await managerSession.json<{ error: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED' }) }
-  );
-  check('Budget approval with no budget is refused', noBudget.status === 400, noBudget.body?.error);
-
-  const budgetApproved = await managerSession.json<{ status: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    { method: 'POST', body: JSON.stringify({ target: 'BUDGET_APPROVED', budget: 250000, requiredCpl: 2500 }) }
-  );
-  check('The Manager applies the budget and CPL', budgetApproved.status === 200 && budgetApproved.body.status === 'BUDGET_APPROVED');
-
-  // The handover names the Google Ads account as well as the person: the Ops
-  // requirement form no longer asks for one, so this is the only point at
-  // which the request becomes measurable against the synced data.
   const liveAccount = await prisma.campaigns.groupBy({
     by: ['account_id'],
     _count: { _all: true },
@@ -484,42 +497,20 @@ async function main() {
     take: 1,
   });
   const accountId = liveAccount[0]?.account_id ?? null;
-
-  const ghostAccount = await managerSession.json<{ error: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ target: 'ACCOUNT_ASSIGNED', adSpecialistId: adsTeam.id, accountId: 2_000_000_000 }),
-    }
-  );
-  check(
-    'Handing over an account that does not exist is refused',
-    ghostAccount.status === 400,
-    ghostAccount.body?.error
-  );
-
-  const accountAssigned = await managerSession.json<{ status: string }>(
-    `/api/ad-requests/${requestId}/transition`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        target: 'ACCOUNT_ASSIGNED',
-        adSpecialistId: adsTeam.id,
-        ...(accountId === null ? {} : { accountId }),
-      }),
-    }
-  );
-  check('The Manager assigns the Ad Specialist', accountAssigned.status === 200 && accountAssigned.body.status === 'ACCOUNT_ASSIGNED');
   if (accountId !== null) {
-    const withAccount = await prisma.crmAdRequest.findUniqueOrThrow({
-      where: { id: requestId },
-      select: { accountId: true },
-    });
-    check('The Google Ads account is recorded on the request', withAccount.accountId === accountId, `got ${withAccount.accountId}`);
+    const linkAccount = await managerSession.json<{ accountId: number | null }>(
+      `/api/ad-requests/${requestId}/account`,
+      { method: 'PUT', body: JSON.stringify({ accountId }) }
+    );
+    check(
+      'The Google Ads account is set on the request',
+      linkAccount.status === 200 && linkAccount.body.accountId === accountId,
+      `got ${linkAccount.body?.accountId}`
+    );
   }
 
   const specialistQueue = await adsSession.json<{ rows: Array<{ id: string }> }>(
-    '/api/ad-requests?status=AWAITING_AD_SUBMISSION,RECHECK_REQUESTED,ACCOUNT_ASSIGNED,LIVE'
+    '/api/ad-requests?status=AWAITING_AD_SUBMISSION,RECHECK_REQUESTED,REVIEW_APPROVED,LIVE'
   );
   check(
     'It reaches the Ad Specialist queue',
@@ -1082,6 +1073,25 @@ async function main() {
   } else {
     console.log('  SKIP  One trail per request is switched off; threading not exercised.');
   }
+
+  // A rule that can never send must not be saveable: this is how the
+  // "requirement raised" mail went quiet without anyone noticing.
+  const unsendable = await adminMail.json<{ error: string }>('/api/admin/email', {
+    method: 'PUT',
+    body: JSON.stringify({
+      ...config.body.settings,
+      routes: (config.body.routes ?? []).map((r) =>
+        r.event === 'REQUEST_SUBMITTED'
+          ? { ...r, enabled: true, audience: 'FIXED', toEmails: '' }
+          : r
+      ),
+    }),
+  });
+  check(
+    'A rule with no possible recipient is refused on save',
+    unsendable.status === 400 && /addresses below/i.test(unsendable.body?.error ?? ''),
+    unsendable.body?.error ?? `got ${unsendable.status}`
+  );
 
   const preview = await adminMail.json<{
     subject: string; html: string; text: string; skipped: string | null; step: string;
