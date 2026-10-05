@@ -26,7 +26,8 @@ import { cn } from '@/lib/utils';
 type Route = {
   event: string;
   enabled: boolean;
-  audience: 'ROLE' | 'REQUESTER' | 'ASSIGNEE' | 'AD_SPECIALIST' | 'FIXED';
+  toRoles: string[];
+  ccRoles: string[];
   audiencePermission: string | null;
   toEmails: string | null;
   cc: string | null;
@@ -41,6 +42,7 @@ type Settings = {
   fromEmail: string;
   replyTo: string | null;
   subjectPrefix: string | null;
+  suppressedEmails: string | null;
   threadPerRequest: boolean;
   threadSubject: string | null;
   globalCc: string | null;
@@ -65,22 +67,69 @@ type Payload = {
  */
 function routeProblem(r: Route): string | null {
   if (!r.enabled) return null;
-  if (r.audience === 'FIXED' && !(r.toEmails ?? '').trim()) {
-    return 'No recipients: this rule sends only to the addresses below, and there are none. CC on its own cannot carry a mail.';
-  }
-  if (r.audience === 'ROLE' && !(r.audiencePermission ?? '').trim()) {
-    return 'No recipients: a permission is needed to work out who holds it.';
+  if (r.toRoles.length === 0 && !(r.toEmails ?? '').trim()) {
+    return 'Nobody in To: pick a recipient or add an address. CC on its own cannot carry a mail.';
   }
   return null;
 }
 
-const AUDIENCE_LABELS: Record<Route['audience'], string> = {
-  ROLE: 'Everyone with a permission',
-  REQUESTER: 'The person who raised it',
-  AD_SPECIALIST: 'The Ad Specialist on this request',
-  ASSIGNEE: 'The person it is assigned to',
-  FIXED: 'Only the addresses below',
+/** Who a rule can address. Mirrors `RECIPIENTS` on the server. */
+const RECIPIENTS = ['MANAGER', 'REQUESTER', 'AD_SPECIALIST', 'OPS_TEAM', 'ADS_TEAM'] as const;
+
+const RECIPIENT_LABELS: Record<(typeof RECIPIENTS)[number], string> = {
+  MANAGER: 'Manager',
+  REQUESTER: 'Ops — who raised it',
+  AD_SPECIALIST: 'Ad Specialist',
+  OPS_TEAM: 'All of Operations',
+  ADS_TEAM: 'All of the Ads team',
 };
+
+/** Checkbox row of recipient kinds, used for both To and CC. */
+function RecipientPicker({
+  id,
+  label,
+  hint,
+  selected,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium" id={id}>
+        {label}
+      </p>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby={id}>
+        {RECIPIENTS.map((kind) => {
+          const on = selected.includes(kind);
+          return (
+            <button
+              key={kind}
+              type="button"
+              aria-pressed={on}
+              onClick={() =>
+                onChange(on ? selected.filter((k) => k !== kind) : [...selected, kind])
+              }
+              className={cn(
+                'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                on
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-input bg-background text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {RECIPIENT_LABELS[kind]}
+            </button>
+          );
+        })}
+      </div>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
 
 const TOKENS = [
   ['{{reference}}', 'AR-0042'],
@@ -291,6 +340,19 @@ export default function EmailSettingsPage() {
                 />
               </div>
               <Field
+                id="suppressedEmails"
+                label="Never mail"
+                hint="Comma separated. Dropped from To, CC and BCC however a rule resolves — for an address that holds every permission and keeps being swept in."
+                className="sm:col-span-2"
+              >
+                <Input
+                  id="suppressedEmails"
+                  value={settings.suppressedEmails ?? ''}
+                  onChange={(e) => set('suppressedEmails', e.target.value)}
+                  placeholder="admin@kollegeapply.com"
+                />
+              </Field>
+              <Field
                 id="globalCc"
                 label="CC on every mail"
                 hint="Comma separated. Added on top of each rule's own CC."
@@ -394,48 +456,27 @@ export default function EmailSettingsPage() {
 
                     {r.enabled && (
                       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                        <Field id={`${r.event}-audience`} label="Send to">
-                          <Select
-                            value={r.audience}
-                            onValueChange={(v) =>
-                              setRoute(r.event, { audience: v as Route['audience'] })
-                            }
-                          >
-                            <SelectTrigger id={`${r.event}-audience`}>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {Object.entries(AUDIENCE_LABELS).map(([v, label]) => (
-                                <SelectItem key={v} value={v}>
-                                  {label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </Field>
-
-                        {r.audience === 'ROLE' && (
-                          <Field
-                            id={`${r.event}-perm`}
-                            label="Permission"
-                            hint="Everyone holding this gets the mail."
-                          >
-                            <Input
-                              id={`${r.event}-perm`}
-                              value={r.audiencePermission ?? ''}
-                              onChange={(e) =>
-                                setRoute(r.event, { audiencePermission: e.target.value })
-                              }
-                              placeholder="AD_REQUESTS:APPROVE"
-                            />
-                          </Field>
-                        )}
+                        <div className="sm:col-span-2 space-y-3">
+                          <RecipientPicker
+                            id={`${r.event}-to-roles`}
+                            label="To"
+                            selected={r.toRoles}
+                            onChange={(next) => setRoute(r.event, { toRoles: next })}
+                          />
+                          <RecipientPicker
+                            id={`${r.event}-cc-roles`}
+                            label="CC"
+                            hint="The global CC below is added to this on every mail."
+                            selected={r.ccRoles}
+                            onChange={(next) => setRoute(r.event, { ccRoles: next })}
+                          />
+                        </div>
 
                         <Field
                           id={`${r.event}-to`}
                           label="Also to"
                           hint="Fixed addresses, comma separated."
-                          className={r.audience === 'ROLE' ? 'sm:col-span-2' : ''}
+                          className="sm:col-span-2"
                         >
                           <Input
                             id={`${r.event}-to`}

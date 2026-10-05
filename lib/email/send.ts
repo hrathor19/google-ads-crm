@@ -5,6 +5,8 @@ import { usersWithPermission } from '@/lib/notifications';
 import { sendViaBrevo, type Address, type SendInput } from './brevo';
 import type { BriefRow, BriefSection } from './brief';
 import {
+  RECIPIENT_PERMISSION,
+  type Recipient,
   getEmailRoutes,
   getEmailSettings,
   parseAddress,
@@ -121,29 +123,56 @@ export async function resolveRecipients(
   if (!route.enabled) return { to: [], cc: [], bcc: [], subject, stepLine, skipped: `The ${event} route is switched off.` };
   if (!settings.fromEmail) return { to: [], cc: [], bcc: [], subject, stepLine, skipped: 'No From address is configured.' };
 
-  // Who the audience resolves to, before the fixed addresses are added.
-  let audience: Address[] = [];
-  if (route.audience === 'ROLE' && route.audiencePermission) {
-    const userIds = await usersWithPermission(route.audiencePermission);
-    const users = await prisma.crmUser.findMany({
-      where: { id: { in: userIds }, isActive: true },
-      select: { email: true, name: true },
-    });
-    audience = users.map((u) => ({ email: u.email, name: u.name ?? undefined }));
-  } else if (route.audience === 'REQUESTER' && ctx.requester) {
-    audience = parseAddressList(ctx.requester);
-  } else if (route.audience === 'ASSIGNEE' && ctx.assignee) {
-    audience = parseAddressList(ctx.assignee);
-  } else if (route.audience === 'AD_SPECIALIST' && ctx.specialist) {
-    // One person, named on this request. The whole reason this audience
-    // exists: ROLE would resolve to everyone holding AD_REQUESTS:BUILD, and
-    // send one client's budget to every Ad Specialist.
-    audience = parseAddressList(ctx.specialist);
+  // Each side of the mail is a set of people, resolved fresh. Three kinds
+  // come from the request, two from the permission matrix — so "the
+  // Manager" keeps working when somebody joins that role, which a typed-in
+  // address does not.
+  const resolveRoles = async (roles: string[]): Promise<Address[]> => {
+    const out: Address[] = [];
+    for (const role of roles) {
+      if (role === 'REQUESTER') out.push(...parseAddressList(ctx.requester));
+      else if (role === 'AD_SPECIALIST') out.push(...parseAddressList(ctx.specialist));
+      else {
+        const permission = RECIPIENT_PERMISSION[role as Recipient];
+        if (!permission) continue;
+        const userIds = await usersWithPermission(permission);
+        const users = await prisma.crmUser.findMany({
+          where: { id: { in: userIds }, isActive: true },
+          select: { email: true, name: true },
+        });
+        out.push(...users.map((u) => ({ email: u.email, name: u.name ?? undefined })));
+      }
+    }
+    return out;
+  };
+
+  let to = dedupe([...(await resolveRoles(route.toRoles)), ...parseAddressList(route.toEmails)]);
+  let cc = dedupe([
+    ...(await resolveRoles(route.ccRoles)),
+    ...parseAddressList(route.cc),
+    ...parseAddressList(settings.globalCc),
+  ]);
+  let bcc = dedupe([...parseAddressList(route.bcc), ...parseAddressList(settings.globalBcc)]);
+
+  // Addresses nobody wants swept in by a role. A shared admin login holds
+  // every permission by definition, so it lands in every role-based
+  // recipient list and there is no way to take it out by editing a rule.
+  const suppressed = new Set(
+    parseAddressList(settings.suppressedEmails).map((a) => a.email.toLowerCase())
+  );
+  if (suppressed.size) {
+    const keep = (list: Address[]) => list.filter((a) => !suppressed.has(a.email.toLowerCase()));
+    to = keep(to);
+    cc = keep(cc);
+    bcc = keep(bcc);
   }
 
-  let to = dedupe([...audience, ...parseAddressList(route.toEmails)]);
-  let cc = dedupe([...parseAddressList(route.cc), ...parseAddressList(settings.globalCc)]);
-  let bcc = dedupe([...parseAddressList(route.bcc), ...parseAddressList(settings.globalBcc)]);
+  // Nobody is told twice. A CC that is already in To reads as a mistake,
+  // and some clients show the address in both headers.
+  const inTo = new Set(to.map((a) => a.email.toLowerCase()));
+  cc = cc.filter((a) => !inTo.has(a.email.toLowerCase()));
+  const inEither = new Set(Array.from(inTo).concat(cc.map((a) => a.email.toLowerCase())));
+  bcc = bcc.filter((a) => !inEither.has(a.email.toLowerCase()));
 
   // Test mode wins over everything, so trying the configuration out cannot
   // mail the whole team by accident.

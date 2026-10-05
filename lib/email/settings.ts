@@ -1,5 +1,5 @@
 import 'server-only';
-import type { CrmEmailAudience, CrmNotificationType } from '@prisma/client';
+import type { CrmNotificationType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import type { Address } from './brevo';
@@ -12,6 +12,37 @@ import type { Address } from './brevo';
  * a manager wants a copy, a client asks to be dropped from a thread.
  */
 
+/**
+ * Who a mail can be addressed to.
+ *
+ * Three resolve against the request itself, two against the permission
+ * matrix — so "the Manager" keeps working when somebody new joins that role,
+ * which a typed-in address does not.
+ */
+export const RECIPIENTS = [
+  'MANAGER',
+  'REQUESTER',
+  'AD_SPECIALIST',
+  'OPS_TEAM',
+  'ADS_TEAM',
+] as const;
+export type Recipient = (typeof RECIPIENTS)[number];
+
+export const RECIPIENT_LABELS: Record<Recipient, string> = {
+  MANAGER: 'Manager',
+  REQUESTER: 'Operations — whoever raised it',
+  AD_SPECIALIST: 'Ad Specialist on this request',
+  OPS_TEAM: 'Everyone in Operations',
+  ADS_TEAM: 'Everyone in the Ads team',
+};
+
+/** The permission each role-based recipient resolves through. */
+export const RECIPIENT_PERMISSION: Partial<Record<Recipient, string>> = {
+  MANAGER: 'AD_REQUESTS:ASSIGN',
+  OPS_TEAM: 'AD_REQUESTS:CREATE',
+  ADS_TEAM: 'AD_REQUESTS:BUILD',
+};
+
 /** Every workflow event a mail can be attached to, with a plain description. */
 export const EMAIL_EVENTS: Array<{
   event: CrmNotificationType;
@@ -19,9 +50,10 @@ export const EMAIL_EVENTS: Array<{
   description: string;
   /** Which step of the 13-step flow fires it, for the settings page. */
   step: string;
-  /** Sensible default for a fresh install. */
-  defaultAudience: CrmEmailAudience;
-  defaultPermission: string | null;
+  /** Who it is for, on a fresh install. Both are sets: a step can address
+   *  the person who raised the work and the one doing it. */
+  defaultTo: Recipient[];
+  defaultCc: Recipient[];
   defaultSubject: string;
 }> = [
   {
@@ -32,8 +64,8 @@ export const EMAIL_EVENTS: Array<{
     step: 'Step 1',
     // Whoever staffs the work, not whoever can approve: this mail exists to
     // get a Manager to assign somebody.
-    defaultAudience: 'ROLE',
-    defaultPermission: 'AD_REQUESTS:ASSIGN',
+    defaultTo: ['MANAGER'],
+    defaultCc: [],
     defaultSubject: '{{title}} — new ad requirement raised',
   },
   {
@@ -42,8 +74,8 @@ export const EMAIL_EVENTS: Array<{
     description:
       'A Manager put somebody on it and set the money. The brief now carries the Budget and Required CPL — this is the one to build against. Goes to that one person, not everyone who could have been picked.',
     step: 'Step 3',
-    defaultAudience: 'AD_SPECIALIST',
-    defaultPermission: null,
+    defaultTo: ['REQUESTER', 'AD_SPECIALIST'],
+    defaultCc: ['MANAGER'],
     defaultSubject: '{{title}} — assigned to you, with budget and CPL',
   },
   {
@@ -52,8 +84,8 @@ export const EMAIL_EVENTS: Array<{
     description:
       'Was a separate step after the review. The budget is now agreed at assignment, so nothing reaches this any more — it stays only for requests that were already past it.',
     step: 'Retired',
-    defaultAudience: 'AD_SPECIALIST',
-    defaultPermission: null,
+    defaultTo: ['AD_SPECIALIST'],
+    defaultCc: ['MANAGER'],
     defaultSubject: '{{title}} — budget and CPL approved',
   },
   {
@@ -62,8 +94,8 @@ export const EMAIL_EVENTS: Array<{
     description:
       'The Ad Specialist sent the keywords and copy back for review. Goes to whoever reviews them.',
     step: 'Step 5',
-    defaultAudience: 'ROLE',
-    defaultPermission: 'AD_REQUESTS:APPROVE',
+    defaultTo: ['MANAGER'],
+    defaultCc: ['REQUESTER'],
     defaultSubject: '{{title}} — keywords and ad copy ready for review',
   },
   {
@@ -71,8 +103,8 @@ export const EMAIL_EVENTS: Array<{
     label: '4. Review approved',
     description: 'The review passed. The Ad Specialist can take it live.',
     step: 'Step 8',
-    defaultAudience: 'AD_SPECIALIST',
-    defaultPermission: null,
+    defaultTo: ['REQUESTER', 'AD_SPECIALIST'],
+    defaultCc: ['MANAGER'],
     defaultSubject: '{{title}} — review approved',
   },
   {
@@ -80,8 +112,8 @@ export const EMAIL_EVENTS: Array<{
     label: '5. Campaign live',
     description: 'The campaigns are running. Goes to everyone who has been following the request.',
     step: 'Step 9',
-    defaultAudience: 'ROLE',
-    defaultPermission: 'AD_REQUESTS:VIEW',
+    defaultTo: ['MANAGER'],
+    defaultCc: ['AD_SPECIALIST', 'REQUESTER'],
     defaultSubject: '{{title}} — live',
   },
 
@@ -93,8 +125,8 @@ export const EMAIL_EVENTS: Array<{
     description:
       'The review sent it back. The remark is quoted in the mail, so the Ad Specialist knows what to change without opening anything.',
     step: 'Step 7',
-    defaultAudience: 'AD_SPECIALIST',
-    defaultPermission: null,
+    defaultTo: ['AD_SPECIALIST'],
+    defaultCc: ['REQUESTER', 'MANAGER'],
     defaultSubject: '{{title}} — recheck requested',
   },
   {
@@ -102,8 +134,8 @@ export const EMAIL_EVENTS: Array<{
     label: 'Request rejected',
     description: 'The requirement was stopped. Goes back to whoever raised it, with the reason.',
     step: 'Off-ramp',
-    defaultAudience: 'REQUESTER',
-    defaultPermission: null,
+    defaultTo: ['REQUESTER'],
+    defaultCc: ['MANAGER', 'AD_SPECIALIST'],
     defaultSubject: '{{title}} — rejected',
   },
 
@@ -113,8 +145,8 @@ export const EMAIL_EVENTS: Array<{
     label: 'Comment added',
     description: 'Someone commented on a request. Off by default — it is chatty.',
     step: 'Any',
-    defaultAudience: 'ROLE',
-    defaultPermission: 'AD_REQUESTS:VIEW',
+    defaultTo: ['REQUESTER', 'AD_SPECIALIST'],
+    defaultCc: [],
     defaultSubject: '{{title}} — new comment',
   },
 ];
@@ -172,8 +204,8 @@ export async function getEmailRoutes() {
       data: missing.map((e) => ({
         event: e.event,
         enabled: !OFF_BY_DEFAULT.has(e.event),
-        audience: e.defaultAudience,
-        audiencePermission: e.defaultPermission,
+        toRoles: e.defaultTo,
+        ccRoles: e.defaultCc,
         subject: e.defaultSubject,
       })),
       skipDuplicates: true,

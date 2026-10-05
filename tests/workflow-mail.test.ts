@@ -47,32 +47,57 @@ describe('the five mails the flow sends', () => {
 
 describe('who each mail goes to by default', () => {
   const byEvent = Object.fromEntries(EMAIL_EVENTS.map((e) => [e.event, e]));
+  const to = (event: string) => byEvent[event]!.defaultTo;
+  const cc = (event: string) => byEvent[event]!.defaultCc;
 
-  it('sends the assignment to the one Ad Specialist, not everyone who could build', () => {
-    // The explicit ask. ROLE would resolve to every holder of
-    // AD_REQUESTS:BUILD and put one client's brief in all their inboxes.
-    expect(byEvent.REQUEST_SPECIALIST_ASSIGNED!.defaultAudience).toBe('AD_SPECIALIST');
-    expect(byEvent.REQUEST_BUDGET_APPROVED!.defaultAudience).toBe('AD_SPECIALIST');
-    expect(byEvent.REQUEST_APPROVED!.defaultAudience).toBe('AD_SPECIALIST');
-    expect(byEvent.REQUEST_CHANGES_REQUESTED!.defaultAudience).toBe('AD_SPECIALIST');
+  it('tells the Manager when Operations raises a requirement', () => {
+    expect(to('REQUEST_SUBMITTED')).toEqual(['MANAGER']);
   });
 
-  it('sends the new requirement to whoever staffs the work', () => {
-    expect(byEvent.REQUEST_SUBMITTED!.defaultAudience).toBe('ROLE');
-    expect(byEvent.REQUEST_SUBMITTED!.defaultPermission).toBe('AD_REQUESTS:ASSIGN');
+  it('tells both the requester and the one person doing the work, on assignment', () => {
+    // Not everyone who *could* have been picked: AD_SPECIALIST resolves to
+    // the one named on this request.
+    expect(to('REQUEST_SPECIALIST_ASSIGNED')).toEqual(['REQUESTER', 'AD_SPECIALIST']);
+    expect(cc('REQUEST_SPECIALIST_ASSIGNED')).toEqual(['MANAGER']);
   });
 
-  it('sends a rejection back to whoever raised it', () => {
-    expect(byEvent.REQUEST_REJECTED!.defaultAudience).toBe('REQUESTER');
+  it('sends the ad copy to the Manager, copying whoever raised it', () => {
+    expect(to('REQUEST_ADS_SUBMITTED')).toEqual(['MANAGER']);
+    expect(cc('REQUEST_ADS_SUBMITTED')).toEqual(['REQUESTER']);
   });
 
-  it('gives a ROLE route a permission and the others none', () => {
+  it('tells the requester and the specialist when the review passes', () => {
+    expect(to('REQUEST_APPROVED')).toEqual(['REQUESTER', 'AD_SPECIALIST']);
+  });
+
+  it('tells the Manager when it goes live', () => {
+    expect(to('REQUEST_LIVE')).toEqual(['MANAGER']);
+  });
+
+  it('addresses a recheck to whoever has to act on it', () => {
+    // The Specialist does the work; the reviewer who asked and the Manager
+    // watching the round count are copied.
+    expect(to('REQUEST_CHANGES_REQUESTED')).toEqual(['AD_SPECIALIST']);
+    expect(cc('REQUEST_CHANGES_REQUESTED')).toEqual(['REQUESTER', 'MANAGER']);
+  });
+
+  it('sends a rejection to the person whose request it was', () => {
+    // Copying the Specialist matters: a rejection at review means stop
+    // building, and they would otherwise carry on.
+    expect(to('REQUEST_REJECTED')).toEqual(['REQUESTER']);
+    expect(cc('REQUEST_REJECTED')).toContain('AD_SPECIALIST');
+  });
+
+  it('never leaves a rule with nobody in To', () => {
     for (const e of EMAIL_EVENTS) {
-      if (e.defaultAudience === 'ROLE') {
-        expect(e.defaultPermission, `${e.event} is ROLE with no permission`).toBeTruthy();
-      } else {
-        expect(e.defaultPermission, `${e.event} is ${e.defaultAudience} with a permission`).toBeNull();
-      }
+      expect(e.defaultTo.length, `${e.event} has an empty To`).toBeGreaterThan(0);
+    }
+  });
+
+  it('never copies somebody who is already in To', () => {
+    for (const e of EMAIL_EVENTS) {
+      const overlap = e.defaultCc.filter((r) => e.defaultTo.includes(r));
+      expect(overlap, `${e.event} has ${overlap.join(', ')} in both`).toEqual([]);
     }
   });
 });

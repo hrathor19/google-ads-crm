@@ -786,18 +786,20 @@ enum ReviewOutcome {
 }
 
 /// Who a notification mail goes to, besides any fixed addresses.
-enum CrmEmailAudience {
-  /// Everyone holding a given permission, e.g. whoever can approve.
-  ROLE
-  /// The person who raised the request.
+/// Who a mail is addressed to, resolved against the request and the matrix.
+enum CrmEmailRecipient {
+  /// Everyone who can staff work: holders of AD_REQUESTS:ASSIGN.
+  MANAGER
+  /// The person who raised this request.
   REQUESTER
-  /// The person the request is assigned to.
-  ASSIGNEE
-  /// The Ad Specialist named on this request, and nobody else holding BUILD.
+  /// The Ad Specialist named on this request, and nobody else.
   AD_SPECIALIST
-  /// Only the fixed To addresses configured on the route.
-  FIXED
+  /// Everyone who raises requirements: holders of AD_REQUESTS:CREATE.
+  OPS_TEAM
+  /// Everyone who builds campaigns: holders of AD_REQUESTS:BUILD.
+  ADS_TEAM
 }
+
 
 /// Email settings, one row. `id` is pinned so there can only ever be one.
 model CrmEmailSetting {
@@ -831,6 +833,11 @@ model CrmEmailSetting {
   /// the configuration out without mailing the whole team.
   testModeRecipient String? @map("test_mode_recipient")
 
+  /// Never mail these, however a rule resolves. For an address that holds a
+  /// permission and so keeps being swept into role-based recipients without
+  /// anyone wanting it there — a shared admin login, most often.
+  suppressedEmails String? @map("suppressed_emails")
+
   updatedAt   DateTime @updatedAt @map("updated_at")
   updatedById String?  @map("updated_by_id")
   updatedBy   CrmUser? @relation("emailSettingUpdatedBy", fields: [updatedById], references: [id])
@@ -845,11 +852,15 @@ model CrmEmailRoute {
 
   enabled Boolean @default(true)
 
-  audience           CrmEmailAudience @default(ROLE)
-  /// Used when `audience` is ROLE: everyone holding this `MODULE:ACTION`.
-  audiencePermission String?          @map("audience_permission")
+  /// Who the mail is for, as a set rather than one choice: a step can
+  /// legitimately address the person who raised the request *and* the
+  /// specialist building it, which a single audience could not express.
+  /// Values are `CrmEmailRecipient` names; stored as text so a new kind
+  /// needs no enum migration.
+  toRoles String[] @default([]) @map("to_roles")
+  ccRoles String[] @default([]) @map("cc_roles")
 
-  /// Comma-separated addresses, added to whoever `audience` resolves to.
+  /// Comma-separated addresses, added on top of whoever the roles resolve to.
   toEmails String? @map("to_emails")
   cc       String?
   bcc      String?

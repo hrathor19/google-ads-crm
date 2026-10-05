@@ -4,6 +4,7 @@ import { logAudit } from '@/lib/audit';
 import { testBrevoConnection } from '@/lib/email/brevo';
 import {
   EMAIL_EVENTS,
+  RECIPIENTS,
   getEmailRoutes,
   getEmailSettings,
   invalidAddresses,
@@ -57,6 +58,7 @@ const settingsSchema = z.object({
     .refine((v) => v === null || parseAddress(v) !== null, 'That is not a valid email address'),
   subjectPrefix: z.string().trim().max(120).nullable().optional().transform((v) => (v ? v : null)),
   threadPerRequest: z.boolean().optional(),
+  suppressedEmails: z.string().trim().max(500).nullable().optional().transform((v) => (v ? v : null)),
   threadSubject: z.string().trim().max(200).nullable().optional().transform((v) => (v ? v : null)),
   globalCc: addressList,
   globalBcc: addressList,
@@ -73,8 +75,8 @@ const settingsSchema = z.object({
       z.object({
         event: z.string(),
         enabled: z.boolean(),
-        audience: z.enum(['ROLE', 'REQUESTER', 'ASSIGNEE', 'AD_SPECIALIST', 'FIXED']),
-        audiencePermission: z.string().trim().max(100).nullable().optional(),
+        toRoles: z.array(z.enum(RECIPIENTS)).max(8).default([]),
+        ccRoles: z.array(z.enum(RECIPIENTS)).max(8).default([]),
         toEmails: addressList,
         cc: addressList,
         bcc: addressList,
@@ -121,16 +123,10 @@ export async function PUT(req: Request) {
     // intent is to stop that notification, switching the rule off says so.
     for (const r of body.routes ?? []) {
       if (!r.enabled) continue;
-      if (r.audience === 'FIXED' && !(r.toEmails ?? '').trim()) {
+      if ((r.toRoles ?? []).length === 0 && !(r.toEmails ?? '').trim()) {
         throw badRequest(
-          `"${r.event}" is set to send only to the addresses below, but there are none. ` +
-            'Add a To address, pick a different audience, or switch the rule off. ' +
-            'CC on its own cannot carry a mail.'
-        );
-      }
-      if (r.audience === 'ROLE' && !(r.audiencePermission ?? '').trim()) {
-        throw badRequest(
-          `"${r.event}" sends to everyone holding a permission, but no permission is set.`
+          `"${r.event}" has nobody in To. Pick at least one recipient, add an address, ` +
+            'or switch the rule off. CC on its own cannot carry a mail.'
         );
       }
     }
@@ -146,6 +142,7 @@ export async function PUT(req: Request) {
           replyTo: body.replyTo ?? null,
           subjectPrefix: body.subjectPrefix ?? null,
           threadPerRequest: body.threadPerRequest ?? true,
+          suppressedEmails: body.suppressedEmails ?? null,
           threadSubject: body.threadSubject ?? '{{title}}',
           globalCc: body.globalCc ?? null,
           globalBcc: body.globalBcc ?? null,
@@ -159,6 +156,7 @@ export async function PUT(req: Request) {
           replyTo: body.replyTo ?? null,
           subjectPrefix: body.subjectPrefix ?? null,
           threadPerRequest: body.threadPerRequest ?? true,
+          suppressedEmails: body.suppressedEmails ?? null,
           threadSubject: body.threadSubject ?? '{{title}}',
           globalCc: body.globalCc ?? null,
           globalBcc: body.globalBcc ?? null,
@@ -172,8 +170,8 @@ export async function PUT(req: Request) {
           where: { event: r.event as never },
           data: {
             enabled: r.enabled,
-            audience: r.audience,
-            audiencePermission: r.audiencePermission ?? null,
+            toRoles: r.toRoles ?? [],
+            ccRoles: r.ccRoles ?? [],
             toEmails: r.toEmails ?? null,
             cc: r.cc ?? null,
             bcc: r.bcc ?? null,

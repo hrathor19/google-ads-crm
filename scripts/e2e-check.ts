@@ -1040,7 +1040,7 @@ async function main() {
 
   const config = await adminMail.json<{
     settings: { threadPerRequest: boolean };
-    routes: Array<{ event: string; audience: string; enabled: boolean }>;
+    routes: Array<{ event: string; toRoles: string[]; ccRoles: string[]; enabled: boolean }>;
     events: Array<{ event: string }>;
   }>('/api/admin/email');
   check('The Email page lists a route for every flow step', config.status === 200 &&
@@ -1082,15 +1082,47 @@ async function main() {
       ...config.body.settings,
       routes: (config.body.routes ?? []).map((r) =>
         r.event === 'REQUEST_SUBMITTED'
-          ? { ...r, enabled: true, audience: 'FIXED', toEmails: '' }
+          ? { ...r, enabled: true, toRoles: [], toEmails: '' }
           : r
       ),
     }),
   });
   check(
     'A rule with no possible recipient is refused on save',
-    unsendable.status === 400 && /addresses below/i.test(unsendable.body?.error ?? ''),
+    unsendable.status === 400 && /nobody in To/i.test(unsendable.body?.error ?? ''),
     unsendable.body?.error ?? `got ${unsendable.status}`
+  );
+
+  // The agreed routing, resolved against a real request rather than read
+  // off the defaults: this is what would actually be addressed.
+  const suppressedHits: string[] = [];
+  const emptyTo: string[] = [];
+  for (const event of FLOW_EVENTS) {
+    const p = await adminMail.json<{
+      to: Array<{ email: string }>;
+      cc: Array<{ email: string }>;
+      bcc: Array<{ email: string }>;
+    }>(`/api/admin/email/preview?event=${event}`);
+    const everyone = [...(p.body.to ?? []), ...(p.body.cc ?? []), ...(p.body.bcc ?? [])];
+    if (everyone.some((a) => a.email === 'admin@kollegeapply.com')) suppressedHits.push(event);
+    if ((p.body.to ?? []).length === 0) emptyTo.push(event);
+    // Nobody should be told twice; some clients render the address in both.
+    const inTo = new Set((p.body.to ?? []).map((a) => a.email));
+    check(
+      `${event} does not CC somebody already in To`,
+      !(p.body.cc ?? []).some((a) => inTo.has(a.email)),
+      (p.body.cc ?? []).map((a) => a.email).join(', ')
+    );
+  }
+  check(
+    'No rule resolves to an empty To',
+    emptyTo.length === 0,
+    emptyTo.join(', ') || 'all addressed'
+  );
+  check(
+    'The suppressed address is dropped from every rule',
+    suppressedHits.length === 0,
+    suppressedHits.join(', ') || 'admin@kollegeapply.com not addressed anywhere'
   );
 
   const preview = await adminMail.json<{
