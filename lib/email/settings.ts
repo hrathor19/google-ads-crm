@@ -60,7 +60,7 @@ export const EMAIL_EVENTS: Array<{
     event: 'REQUEST_SUBMITTED',
     label: '1. Requirement raised',
     description:
-      'Operations submitted a new ad requirement. The full brief goes out with Budget and CPL blank — nobody has set them yet.',
+      'Operations submitted a new ad requirement. The mail is a transcript of their form — only what they filled in, so nothing reads as an omission on their part.',
     step: 'Step 1',
     // Whoever staffs the work, not whoever can approve: this mail exists to
     // get a Manager to assign somebody.

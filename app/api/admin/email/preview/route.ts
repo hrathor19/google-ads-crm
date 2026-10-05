@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { handle, parseQuery, prisma, requirePermission } from '@/lib/api';
 import { EMAIL_EVENTS } from '@/lib/email/settings';
-import { resolveRecipients, renderBody } from '@/lib/email/send';
+import { resolveRecipients, renderBody, introFor } from '@/lib/email/send';
 import { buildRequestBrief } from '@/lib/email/brief';
 import { env } from '@/lib/env';
 import type { CrmNotificationType } from '@prisma/client';
@@ -48,7 +48,9 @@ export async function GET(req: Request) {
       return { error: 'There is no ad request to preview against yet.' };
     }
 
-    const brief = await buildRequestBrief(sample.id);
+    const brief = await buildRequestBrief(sample.id, {
+      onlyOpsFields: event === 'REQUEST_SUBMITTED',
+    });
     if (!brief) return { error: 'That request no longer exists.' };
 
     const base = env.email().publicBaseUrl.replace(/\/$/, '');
@@ -80,9 +82,13 @@ export async function GET(req: Request) {
     // takes it. Rendering without it showed a preview missing the one thing
     // that distinguishes mails once they share a subject — a preview that
     // differs from the send is worse than none.
+    // The intro the send would use, not the catalogue's description of the
+    // event. Rendering the description meant the preview promised things the
+    // real mail did not say — and a preview that differs from the send is
+    // worse than no preview.
     const { html, text } = renderBody(
       { ...ctx, stepLine: resolved.stepLine },
-      known.description
+      await introFor(event, ctx)
     );
 
     return {

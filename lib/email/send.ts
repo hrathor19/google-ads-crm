@@ -279,11 +279,14 @@ export function renderBody(
   // The three figures the flow turns on, side by side. A muted one is the
   // honest rendering of "not decided yet" — the row is there, the value
   // is an em dash, and nobody has to wonder whether it was forgotten.
+  // Width from the count, not a fixed third: a single tile stretched across
+  // the whole mail and read as an empty panel rather than one figure.
+  const tileWidth = `${Math.round(100 / Math.max(1, Math.min(highlights.length, 3)))}%`;
   const highlightHtml = highlights.length
-    ? `<table role="presentation" width="100%" style="margin:18px 0 0;border-collapse:separate;border-spacing:8px 0"><tr>${highlights
+    ? `<table role="presentation" style="margin:18px 0 0;border-collapse:separate;border-spacing:8px 0${highlights.length >= 3 ? ';width:100%' : ''}"><tr>${highlights
         .map(
           (h) =>
-            `<td width="33%" style="background:${h.muted ? '#f8fafc' : '#f1f5f9'};border:1px solid ${h.muted ? '#e2e8f0' : '#cbd5e1'};border-radius:6px;padding:10px 12px">` +
+            `<td width="${tileWidth}" style="min-width:150px;background:${h.muted ? '#f8fafc' : '#f1f5f9'};border:1px solid ${h.muted ? '#e2e8f0' : '#cbd5e1'};border-radius:6px;padding:10px 12px">` +
             `<div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#94a3b8">${escapeHtml(h.label)}</div>` +
             `<div style="margin-top:3px;font-size:16px;font-weight:600;color:${h.muted ? '#94a3b8' : '#0f172a'}">${escapeHtml(h.value)}</div>` +
             `</td>`
@@ -373,16 +376,7 @@ export async function sendEventEmail(
     const routes = await getEmailRoutes();
     const route = routes.find((r) => r.event === event);
 
-    const vars: Record<string, string> = {
-      reference: ctx.reference,
-      title: ctx.title,
-      status: ctx.status ?? '',
-      actor: ctx.actor ?? '',
-      reason: ctx.reason ?? '',
-    };
-    const intro = route?.intro
-      ? renderTemplate(route.intro, vars)
-      : defaultIntro(event, ctx);
+    const intro = await introFor(event, ctx);
 
     const { html, text } = renderBody({ ...ctx, stepLine: resolved.stepLine }, intro);
     const input: SendInput = {
@@ -425,10 +419,33 @@ export async function sendEventEmail(
   }
 }
 
+/**
+ * The opening line a mail will carry — the route's own, or the default.
+ *
+ * Exported so the preview renders the same sentence the send would. It used
+ * to show the catalogue's description of the event instead, which is written
+ * for the settings page and promised things the mail did not say.
+ */
+export async function introFor(
+  event: CrmNotificationType,
+  ctx: EventContext
+): Promise<string> {
+  const routes = await getEmailRoutes();
+  const route = routes.find((r) => r.event === event);
+  if (!route?.intro) return defaultIntro(event, ctx);
+  return renderTemplate(route.intro, {
+    reference: ctx.reference,
+    title: ctx.title,
+    status: ctx.status ?? '',
+    actor: ctx.actor ?? '',
+    reason: ctx.reason ?? '',
+  });
+}
+
 function defaultIntro(event: CrmNotificationType, ctx: EventContext): string {
   switch (event) {
     case 'REQUEST_SUBMITTED':
-      return `${ctx.actor ?? 'Operations'} raised this ad requirement. The brief is below — the budget and CPL are still to be decided.`;
+      return `${ctx.actor ?? 'Operations'} raised this ad requirement. Everything they specified is below; the budget, CPL and the Ad Specialist are still to be decided.`;
     case 'REQUEST_SPECIALIST_ASSIGNED':
       return `You have been assigned to this requirement by ${ctx.actor ?? 'a manager'}. The brief is below.`;
     case 'REQUEST_BUDGET_APPROVED':

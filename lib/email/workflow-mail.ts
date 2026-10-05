@@ -66,7 +66,12 @@ export async function mailForTransition(params: {
   if (!event) return { sent: false, detail: `No mail is configured for ${params.target}.` };
 
   try {
-    const brief = await buildRequestBrief(params.requestId);
+    // The submitted mail is a transcript of the Ops requirement form. Every
+    // later mail carries the full picture, because by then the budget, the
+    // account and the campaigns are real decisions somebody made.
+    const brief = await buildRequestBrief(params.requestId, {
+      onlyOpsFields: event === 'REQUEST_SUBMITTED',
+    });
     if (!brief) return { sent: false, detail: 'The request no longer exists.' };
 
     const base = env.email().publicBaseUrl.replace(/\/$/, '');

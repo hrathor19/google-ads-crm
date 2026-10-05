@@ -76,7 +76,18 @@ const count = (v: number | null | undefined) =>
  * blank in the first mail, and hiding them there would lose the one thing
  * the reader is checking for.
  */
-export type BriefRow = { label: string; value: string; wide?: boolean; always?: boolean };
+export type BriefRow = {
+  label: string;
+  value: string;
+  wide?: boolean;
+  always?: boolean;
+  /**
+   * Not something Operations types. The objective defaults, the account and
+   * campaigns are picked later, the budget is a Manager's call — all of it
+   * is noise in the mail announcing what Ops actually asked for.
+   */
+  notOps?: boolean;
+};
 export type BriefSection = { heading: string; rows: BriefRow[] };
 
 export type RequestBrief = {
@@ -101,7 +112,10 @@ export type RequestBrief = {
  * mail — which can happen, and is not worth throwing over: the state change
  * already committed.
  */
-export async function buildRequestBrief(requestId: string): Promise<RequestBrief | null> {
+export async function buildRequestBrief(
+  requestId: string,
+  opts: { onlyOpsFields?: boolean } = {}
+): Promise<RequestBrief | null> {
   const r = await prisma.crmAdRequest.findUnique({
     where: { id: requestId },
     select: {
@@ -189,10 +203,14 @@ export async function buildRequestBrief(requestId: string): Promise<RequestBrief
           label: 'Client type',
           value: r.clientType ? (CLIENT_TYPE_LABELS[r.clientType] ?? r.clientType) : DASH,
         },
-        { label: 'Objective', value: OBJECTIVE_LABELS[r.objective] ?? r.objective },
-        { label: 'Google Ads account', value: text(r.account?.descriptive_name) },
+        {
+          label: 'Objective',
+          value: OBJECTIVE_LABELS[r.objective] ?? r.objective,
+          notOps: true,
+        },
+        { label: 'Google Ads account', value: text(r.account?.descriptive_name), notOps: true },
         { label: 'Product / service', value: text(r.productService), wide: true },
-        { label: 'Campaigns', value: campaigns.join(', ') || DASH },
+        { label: 'Campaigns', value: campaigns.join(', ') || DASH, notOps: true },
         { label: 'Performance parameter', value: text(r.performanceParameter) },
       ],
     },
@@ -217,7 +235,7 @@ export async function buildRequestBrief(requestId: string): Promise<RequestBrief
       rows: [
         { label: 'Target application', value: count(r.targetApplication) },
         { label: 'Target admission', value: text(r.targetAdmission) },
-        { label: 'Monthly lead targets', value: monthly || DASH, wide: true },
+        { label: 'Monthly lead targets', value: monthly || DASH, wide: true, notOps: true },
       ],
     },
     { heading: 'Destinations', rows: destinationRows },
@@ -226,18 +244,35 @@ export async function buildRequestBrief(requestId: string): Promise<RequestBrief
       rows: [
         { label: 'Reporting panel', value: text(r.reportingPanel) },
         { label: 'Account visibility', value: text(r.accountVisibility) },
-        { label: 'USPs and offers', value: text(r.usps), wide: true },
-        { label: 'Keywords', value: text(r.keywords), wide: true },
+        { label: 'USPs and offers', value: text(r.usps), wide: true, notOps: true },
+        { label: 'Keywords', value: text(r.keywords), wide: true, notOps: true },
         { label: 'Other notes', value: text(r.notes), wide: true },
       ],
     },
     {
       heading: 'People',
       rows: [
-        { label: 'Raised by', value: r.createdBy.name || r.createdBy.email, always: true },
-        { label: 'Ad Specialist', value: r.adSpecialist?.name ?? DASH, always: true },
+        // The intro already names who raised it, and nobody is assigned
+        // yet, so the whole section is noise on the first mail.
+        { label: 'Raised by', value: r.createdBy.name || r.createdBy.email, always: true, notOps: true },
+        { label: 'Ad Specialist', value: r.adSpecialist?.name ?? DASH, always: true, notOps: true },
       ],
     },
+  ];
+
+  // The mail announcing what Operations asked for shows what Operations
+  // typed, and nothing else: an "Assigned budget —" tile reads as an
+  // omission on their part rather than a decision nobody has taken yet.
+  const visibleSections = opts.onlyOpsFields
+    ? sections
+        .map((sec) => ({ ...sec, rows: sec.rows.filter((row) => !row.notOps) }))
+        .filter((sec) => sec.rows.length > 0)
+    : sections;
+
+  const allHighlights = [
+    { label: 'Assigned budget', value: rupees(r.budget), muted: r.budget === null, ops: false },
+    { label: 'Required CPL', value: rupees(r.requiredCpl), muted: r.requiredCpl === null, ops: false },
+    { label: 'Required leads', value: count(r.requiredLeads), muted: r.requiredLeads === null, ops: true },
   ];
 
   return {
@@ -250,11 +285,9 @@ export async function buildRequestBrief(requestId: string): Promise<RequestBrief
     specialistEmail: r.adSpecialist?.email ?? null,
     specialistName: r.adSpecialist?.name ?? null,
     managerEmail: r.accountManager?.email ?? null,
-    highlights: [
-      { label: 'Assigned budget', value: rupees(r.budget), muted: r.budget === null },
-      { label: 'Required CPL', value: rupees(r.requiredCpl), muted: r.requiredCpl === null },
-      { label: 'Required leads', value: count(r.requiredLeads), muted: r.requiredLeads === null },
-    ],
-    sections,
+    highlights: (opts.onlyOpsFields ? allHighlights.filter((h) => h.ops) : allHighlights).map(
+      ({ label, value, muted }) => ({ label, value, muted })
+    ),
+    sections: visibleSections,
   };
 }

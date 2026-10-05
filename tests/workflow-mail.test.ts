@@ -317,3 +317,49 @@ describe('keeping the brief to one screen', () => {
     expect(html).toContain('colspan="2"');
   });
 });
+
+describe('the first mail shows only what Operations typed', () => {
+  it('leaves out the fields a Manager decides later', () => {
+    // An "Assigned budget —" tile on this mail reads as something Ops
+    // forgot, when it is a decision nobody has taken yet.
+    const { html } = renderBody(
+      {
+        reference: 'AR-0006',
+        title: 'Woxsen',
+        highlights: [{ label: 'Required leads', value: '100', muted: false }],
+        sections: [
+          {
+            heading: 'Campaign',
+            rows: [{ label: 'Tracking ID', value: '1253451673' }],
+          },
+        ],
+      },
+      'Operations raised this.'
+    );
+    expect(html).toContain('Required leads');
+    expect(html).not.toContain('Assigned budget');
+    expect(html).not.toContain('Required CPL');
+  });
+
+  it('does not stretch a lone figure across the whole mail', () => {
+    const one = renderBody(
+      { reference: 'A', title: 'B', highlights: [{ label: 'Required leads', value: '100', muted: false }] },
+      'x'
+    ).html;
+    const three = renderBody(
+      {
+        reference: 'A',
+        title: 'B',
+        highlights: [
+          { label: 'Assigned budget', value: '₹1', muted: false },
+          { label: 'Required CPL', value: '₹2', muted: false },
+          { label: 'Required leads', value: '3', muted: false },
+        ],
+      },
+      'x'
+    ).html;
+    expect(one).toContain('width="100%"');
+    expect(one).not.toContain('border-spacing:8px 0;width:100%');
+    expect(three).toContain('border-spacing:8px 0;width:100%');
+  });
+});
