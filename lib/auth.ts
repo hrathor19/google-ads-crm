@@ -1,8 +1,10 @@
 import type { NextAuthOptions, Session } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
+import GoogleProvider from 'next-auth/providers/google';
 import bcrypt from 'bcryptjs';
 import { prisma } from './prisma';
 import { getLockoutRemaining, recordFailedLogin, clearFailedLogins } from './login-rate-limit';
+import { env } from './env';
 
 /**
  * Auth follows Counselling CRM's pattern exactly: NextAuth v4 credentials
@@ -17,6 +19,27 @@ import { getLockoutRemaining, recordFailedLogin, clearFailedLogins } from './log
 
 // How often (seconds) a live JWT is re-checked against the DB.
 const TOKEN_REVALIDATE_SECONDS = 5 * 60;
+
+/**
+ * Whether an address may sign in with Google at all.
+ *
+ * Checked on the server, in the `signIn` callback, because the Google
+ * consent screen's own domain restriction is a setting in somebody else's
+ * console — if it is ever switched from Internal to External, this is what
+ * still refuses a personal gmail account.
+ *
+ * An empty allowlist means no domain restriction, which is the right
+ * reading of "not configured" for a self-hosted install; it is not the
+ * configuration here.
+ */
+export function isAllowedDomain(email: string): boolean {
+  const domains = env.auth().allowedDomains;
+  if (domains.length === 0) return true;
+  const at = email.lastIndexOf('@');
+  if (at < 0) return false;
+  const domain = email.slice(at + 1).toLowerCase();
+  return domains.includes(domain);
+}
 
 export const authOptions: NextAuthOptions = {
   session: {
@@ -92,18 +115,106 @@ export const authOptions: NextAuthOptions = {
         };
       },
     }),
+
+    /**
+     * Google sign-in.
+     *
+     * Deliberately no NextAuth adapter and no account linking: identity
+     * comes from Google, but *authorisation* comes from the `crm_users` row
+     * this app already has. An employee with a valid company address and no
+     * user record is refused rather than created, because a role here
+     * decides who can see client spend and who can commit a budget — that
+     * is a decision somebody makes, not a side effect of logging in.
+     */
+    ...(env.auth().googleClientId && env.auth().googleClientSecret
+      ? [
+          GoogleProvider({
+            clientId: env.auth().googleClientId,
+            clientSecret: env.auth().googleClientSecret,
+            allowDangerousEmailAccountLinking: false,
+            authorization: {
+              params: {
+                // Lets Google filter the account chooser to the workspace;
+                // it is a convenience, never the check.
+                hd: env.auth().allowedDomains[0] ?? undefined,
+                prompt: 'select_account',
+              },
+            },
+          }),
+        ]
+      : []),
   ],
   callbacks: {
-    async jwt({ token, user, trigger }) {
+    /**
+     * The gate for Google sign-in. Credentials have already been checked by
+     * `authorize`, so this only has to rule on the OAuth path.
+     */
+    async signIn({ user, account }) {
+      if (account?.provider !== 'google') return true;
+
+      const email = user.email?.trim().toLowerCase();
+      if (!email) return '/login?error=NoEmail';
+      if (!isAllowedDomain(email)) return '/login?error=Domain';
+
+      const dbUser = await prisma.crmUser.findUnique({
+        where: { email },
+        select: { id: true, isActive: true },
+      });
+      if (!dbUser) return '/login?error=NoAccount';
+      if (!dbUser.isActive) return '/login?error=Deactivated';
+
+      await prisma.crmUser.update({
+        where: { id: dbUser.id },
+        data: { lastLoginAt: new Date() },
+      });
+      return true;
+    },
+
+    async jwt({ token, user, trigger, account }) {
       const nowSeconds = Math.floor(Date.now() / 1000);
 
+      // Google hands back a profile, not a role. Everything this app gates
+      // on lives in `crm_users`, so the first thing a Google session does is
+      // look itself up — otherwise it would arrive authenticated with no
+      // permissions at all and every page would read as broken.
+      if (account?.provider === 'google' && user?.email) {
+        const dbUser = await prisma.crmUser.findUnique({
+          where: { email: user.email.trim().toLowerCase() },
+          select: {
+            id: true,
+            mustChangePassword: true,
+            roleId: true,
+            role: { select: { slug: true, name: true, isSuperAdmin: true } },
+          },
+        });
+        if (!dbUser) {
+          token.invalidated = true;
+          return token;
+        }
+        token.id = dbUser.id;
+        token.roleId = dbUser.roleId;
+        token.roleSlug = dbUser.role.slug;
+        token.roleName = dbUser.role.name;
+        token.isSuperAdmin = dbUser.role.isSuperAdmin;
+        // Never gate a Google session on a password change: they have no
+        // password to change, and the screen would ask for a current one
+        // they could not supply.
+        token.mustChangePassword = false;
+        token.provider = 'google';
+        token.lastValidated = nowSeconds;
+        return token;
+      }
+
+      // The credentials path, where `authorize` has already resolved the
+      // role. The fallbacks are for the type only: this branch is reached
+      // solely from `authorize`, which always returns all of them.
       if (user) {
         token.id = user.id;
-        token.roleId = user.roleId;
-        token.roleSlug = user.roleSlug;
-        token.roleName = user.roleName;
-        token.isSuperAdmin = user.isSuperAdmin;
-        token.mustChangePassword = user.mustChangePassword;
+        token.roleId = user.roleId ?? '';
+        token.roleSlug = user.roleSlug ?? '';
+        token.roleName = user.roleName ?? '';
+        token.isSuperAdmin = user.isSuperAdmin ?? false;
+        token.mustChangePassword = user.mustChangePassword ?? false;
         token.lastValidated = nowSeconds;
         return token;
       }
@@ -131,7 +242,8 @@ export const authOptions: NextAuthOptions = {
           token.roleSlug = dbUser.role.slug;
           token.roleName = dbUser.role.name;
           token.isSuperAdmin = dbUser.role.isSuperAdmin;
-          token.mustChangePassword = dbUser.mustChangePassword;
+          token.mustChangePassword =
+            token.provider === 'google' ? false : dbUser.mustChangePassword;
           token.lastValidated = nowSeconds;
         }
       }

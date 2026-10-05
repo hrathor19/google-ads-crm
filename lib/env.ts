@@ -122,6 +122,23 @@ export const env = {
    * Ads Intelligence project; everything else about how mail is addressed
    * lives in the database so a Super Admin can change it without a deploy.
    */
+  /**
+   * Sign-in configuration.
+   *
+   * `allowedDomains` is the server-side gate on Google sign-in. The consent
+   * screen can also be set to Internal, but that is a toggle in a console
+   * this app cannot see, so it is treated as defence in depth rather than
+   * the control.
+   */
+  auth: () => ({
+    googleClientId: str('GOOGLE_OAUTH_CLIENT_ID'),
+    googleClientSecret: str('GOOGLE_OAUTH_CLIENT_SECRET'),
+    allowedDomains: str('AUTH_ALLOWED_DOMAINS')
+      .split(',')
+      .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean),
+  }),
+
   email: () => ({
     brevoApiKey: str('BREVO_API_KEY'),
     /** Seeds the From address the first time the settings row is created. */
