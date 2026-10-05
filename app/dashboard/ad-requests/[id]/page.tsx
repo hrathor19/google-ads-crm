@@ -41,7 +41,7 @@ import {
   type TransitionPayload,
 } from '@/components/data/transition-dialog';
 import { ErrorState } from '@/components/data/states';
-import { OBJECTIVE_LABELS, RequestStatusBadge, REQUEST_ACTION_LABELS,
+import { RequestStatusBadge, REQUEST_ACTION_LABELS,
   REQUEST_STATUS_LABELS } from '@/components/data/status-badge';
 import {
   AssetList,
@@ -53,11 +53,13 @@ import {
   type Validation,
 } from '@/components/data/ad-copy-panel';
 import { LandingScorePanel, type LandingScoreData } from '@/components/data/landing-score-panel';
+import { AdRequestForm } from '@/components/data/ad-request-form';
+import { toFormDefaults } from '@/lib/workflow/form-defaults';
 import { CampaignLinkDialog } from '@/components/data/campaign-link-dialog';
 import { RequestPerformance } from '@/components/data/request-performance';
 import { apiSend, useApi } from '@/lib/hooks/use-api';
 import { usePermissions } from '@/components/providers/permission-provider';
-import { formatCurrency, formatDate, formatDateTime, formatRelative } from '@/lib/format';
+import { formatDate, formatDateTime, formatRelative } from '@/lib/format';
 
 type RequestDetail = {
   id: string;
@@ -75,6 +77,25 @@ type RequestDetail = {
   usps: string | null;
   keywords: string | null;
   notes: string | null;
+  trackingId: string | null;
+  clientType: string | null;
+  ageRestriction: string | null;
+  requiredLeads: number | null;
+  performanceParameter: string | null;
+  targetApplication: number | null;
+  targetAdmission: string | null;
+  applicationDeadline: string | null;
+  focusedMonths: string | null;
+  blockedLocations: string | null;
+  accountVisibility: string | null;
+  reportingPanel: string | null;
+  adUrlKapplpDesktop: string | null;
+  adUrlKapplpMobile: string | null;
+  adUrlKapplpBing: string | null;
+  adUrlClientlpDesktop: string | null;
+  adUrlClientlpMobile: string | null;
+  adUrlClientlpBing: string | null;
+  leadTargets?: Array<{ month: string; leads: number }>;
   linkedCampaignId: string | null;
   linkedCampaigns: Array<{
     id: number;
@@ -490,57 +511,12 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
 
         {/* ─── Brief ─────────────────────────────────────────────────── */}
         <TabsContent value="brief">
-          <Card>
-            <CardContent className="grid gap-4 p-4 sm:grid-cols-2">
-              <Detail label="Account" value={r.accountName ?? 'Not tied to an account'} />
-              <Detail label="Objective" value={OBJECTIVE_LABELS[r.objective] ?? r.objective} />
-              <Detail label="Product / service" value={r.productService} />
-              <Detail label="Location" value={r.location} />
-              <Detail
-                label="Budget"
-                value={data.canSeeMoney ? formatCurrency(r.budget) : 'Hidden by your role'}
-              />
-              <Detail
-                label="Flight"
-                value={`${formatDate(r.startDate)} → ${r.endDate ? formatDate(r.endDate) : 'ongoing'}`}
-              />
-              <Detail className="sm:col-span-2" label="Target audience" value={r.targetAudience} />
-              <div className="sm:col-span-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Landing page
-                </p>
-                <a
-                  href={r.landingPageUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-0.5 inline-flex items-center gap-1 break-all text-sm text-primary hover:underline"
-                >
-                  {r.landingPageUrl}
-                  <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
-                </a>
-              </div>
-              {r.usps && <Detail className="sm:col-span-2" label="USPs and offers" value={r.usps} />}
-              {r.keywords && (
-                <div className="sm:col-span-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Keywords
-                  </p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {r.keywords
-                      .split(/[\n,]/)
-                      .map((k) => k.trim())
-                      .filter(Boolean)
-                      .map((k) => (
-                        <Badge key={k} variant="secondary" className="font-normal">
-                          {k}
-                        </Badge>
-                      ))}
-                  </div>
-                </div>
-              )}
-              {r.notes && <Detail className="sm:col-span-2" label="Notes" value={r.notes} />}
-            </CardContent>
-          </Card>
+          {/* The requirement form itself, filled in and uneditable, rather
+              than a hand-picked summary of it. The summary had fallen six
+              fields behind the form — tracking id, client type, required
+              leads, the targets and the per-platform destinations were all
+              captured from Operations and then shown to nobody. */}
+          <AdRequestForm readOnly defaults={toFormDefaults(r)} />
         </TabsContent>
 
         {/* ─── Ad copy ───────────────────────────────────────────────── */}
@@ -828,21 +804,3 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
   );
 }
 
-function Detail({
-  label,
-  value,
-  className,
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <div className={className}>
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-0.5 whitespace-pre-wrap text-sm">{value}</p>
-    </div>
-  );
-}

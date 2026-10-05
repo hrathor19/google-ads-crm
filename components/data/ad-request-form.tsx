@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
+import { cn } from '@/lib/utils';
 import { apiSend, useApi } from '@/lib/hooks/use-api';
 import { OBJECTIVE_LABELS } from './status-badge';
 
@@ -66,7 +67,7 @@ const urlField = z
   .optional()
   .refine((v) => !v || /^https?:\/\/\S+$/i.test(v), 'Enter a full URL, including https://');
 
-const schema = z
+const baseSchema = z
   .object({
     // ── Campaign ──────────────────────────────────────────────────────────
     trackingId: opt(100),
@@ -107,7 +108,11 @@ const schema = z
       .array(z.object({ month: z.string(), leads: z.string() }))
       .max(36)
       .optional(),
-  })
+  });
+
+// Split from its refinements so the field list stays readable at runtime:
+// `.refine()` returns a ZodEffects, which has no `.shape`.
+const schema = baseSchema
   .refine((v) => URL_FIELDS.some(([k]) => (v[k] ?? '').trim().length > 0), {
     message: 'Give at least one ads URL — it is the page we score and write copy against.',
     path: ['adUrlClientlpDesktop'],
@@ -122,12 +127,33 @@ const schema = z
 
 export type AdRequestFormValues = z.infer<typeof schema>;
 
+/**
+ * Every field the requirement form captures.
+ *
+ * Exported so a test can assert the read-only brief maps all of them: the
+ * old brief was a hand-written list and had silently fallen six fields
+ * behind this one.
+ */
+export const AD_REQUEST_FORM_FIELDS = Object.keys(baseSchema.shape) as Array<keyof AdRequestFormValues>;
+
 export function AdRequestForm({
   requestId,
   defaults,
+  readOnly = false,
 }: {
   requestId?: string;
   defaults?: Partial<AdRequestFormValues>;
+  /**
+   * Show the requirement exactly as it was filled in, uneditable.
+   *
+   * A `fieldset[disabled]` rather than a `readOnly` prop on each input: it
+   * covers every control including the Radix selects, which are buttons and
+   * ignore `readOnly`, and it cannot be missed off a field added later. The
+   * opacity override is what keeps it legible — a greyed-out form is the
+   * right affordance for "you cannot type here" and the wrong one for "this
+   * is the brief you are working from".
+   */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -219,6 +245,23 @@ export function AdRequestForm({
 
   return (
     <form className="space-y-4" noValidate>
+      <fieldset
+        disabled={readOnly}
+        className={cn(
+          'm-0 min-w-0 space-y-4 border-0 p-0',
+          readOnly && [
+            // Legible, not greyed out: a washed-out form is the right
+            // affordance for "you cannot type here" and the wrong one for
+            // "this is the brief you are working from".
+            '[&_:disabled]:cursor-default [&_:disabled]:opacity-100',
+            // No placeholders. "35" sitting in an empty Target applications
+            // box reads as a value somebody entered, when the truth is the
+            // field was left blank.
+            '[&_input::placeholder]:text-transparent [&_textarea::placeholder]:text-transparent',
+            '[&_[data-placeholder]]:text-transparent',
+          ]
+        )}
+      >
       {/* ── Campaign ──────────────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
@@ -493,6 +536,9 @@ export function AdRequestForm({
         </CardContent>
       </Card>
 
+      </fieldset>
+
+      {!readOnly && (
       <div className="flex flex-wrap gap-2">
         <Button
           type="button"
@@ -516,6 +562,7 @@ export function AdRequestForm({
           {requestId ? 'Save and resubmit' : 'Submit for approval'}
         </Button>
       </div>
+      )}
     </form>
   );
 }
