@@ -76,7 +76,14 @@ export async function GET(req: Request) {
     };
 
     const resolved = await resolveRecipients(event, ctx);
-    const { html, text } = renderBody(ctx, known.description);
+    // The step label comes back from the resolver, exactly as the real send
+    // takes it. Rendering without it showed a preview missing the one thing
+    // that distinguishes mails once they share a subject — a preview that
+    // differs from the send is worse than none.
+    const { html, text } = renderBody(
+      { ...ctx, stepLine: resolved.stepLine },
+      known.description
+    );
 
     return {
       event,
@@ -84,6 +91,7 @@ export async function GET(req: Request) {
       step: known.step,
       previewOf: { id: sample.id, reference: brief.reference, title: brief.title },
       subject: resolved.subject,
+      stepLine: resolved.stepLine ?? null,
       to: resolved.to,
       cc: resolved.cc,
       bcc: resolved.bcc,

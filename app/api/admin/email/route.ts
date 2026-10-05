@@ -56,6 +56,8 @@ const settingsSchema = z.object({
     .transform((v) => (v ? v : null))
     .refine((v) => v === null || parseAddress(v) !== null, 'That is not a valid email address'),
   subjectPrefix: z.string().trim().max(120).nullable().optional().transform((v) => (v ? v : null)),
+  threadPerRequest: z.boolean().optional(),
+  threadSubject: z.string().trim().max(200).nullable().optional().transform((v) => (v ? v : null)),
   globalCc: addressList,
   globalBcc: addressList,
   testModeRecipient: z
@@ -122,6 +124,8 @@ export async function PUT(req: Request) {
           fromEmail: body.fromEmail,
           replyTo: body.replyTo ?? null,
           subjectPrefix: body.subjectPrefix ?? null,
+          threadPerRequest: body.threadPerRequest ?? true,
+          threadSubject: body.threadSubject ?? '{{title}}',
           globalCc: body.globalCc ?? null,
           globalBcc: body.globalBcc ?? null,
           testModeRecipient: body.testModeRecipient ?? null,
@@ -133,6 +137,8 @@ export async function PUT(req: Request) {
           fromEmail: body.fromEmail,
           replyTo: body.replyTo ?? null,
           subjectPrefix: body.subjectPrefix ?? null,
+          threadPerRequest: body.threadPerRequest ?? true,
+          threadSubject: body.threadSubject ?? '{{title}}',
           globalCc: body.globalCc ?? null,
           globalBcc: body.globalBcc ?? null,
           testModeRecipient: body.testModeRecipient ?? null,

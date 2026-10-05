@@ -814,6 +814,15 @@ model CrmEmailSetting {
   /// in one thread in most clients, and makes them searchable.
   subjectPrefix String? @default("[{{reference}}]") @map("subject_prefix")
 
+  /// Give every mail about one request the same subject, so mail clients
+  /// file them as one conversation. Gmail groups by subject before it looks
+  /// at References, so a per-step subject splits the trail however correct
+  /// the headers are. The step moves into the body instead.
+  threadPerRequest Boolean @default(true) @map("thread_per_request")
+  /// The shared subject, after the prefix. `{{title}}` with the default
+  /// prefix reads `[AR-0003] MICA` on every mail in the trail.
+  threadSubject    String? @default("{{title}}") @map("thread_subject")
+
   /// Applied to every mail on top of whatever each route adds.
   globalCc  String? @map("global_cc")
   globalBcc String? @map("global_bcc")

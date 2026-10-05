@@ -156,3 +156,60 @@ describe('the rendered mail', () => {
     expect(html).not.toContain('Open the request');
   });
 });
+
+// ─── Threading ──────────────────────────────────────────────────────────────
+
+describe('keeping one request in one mail trail', () => {
+  it('puts the step in the body, where it cannot split the thread', () => {
+    const { html, text } = renderBody(
+      { reference: 'AR-0003', title: 'MICA', stepLine: 'Budget and CPL approved' },
+      'The Manager approved the spend.'
+    );
+    expect(html).toContain('Budget and CPL approved');
+    expect(text).toContain('>> Budget and CPL approved');
+  });
+
+  it('renders without a step label at all', () => {
+    const { html } = renderBody({ reference: 'AR-0003', title: 'MICA' }, 'Raised.');
+    expect(html).toContain('MICA');
+  });
+
+  it('escapes a step label as carefully as everything else', () => {
+    const { html } = renderBody(
+      { reference: 'AR-0003', title: 'MICA', stepLine: '<b>oops</b>' },
+      'Raised.'
+    );
+    expect(html).not.toContain('<b>oops</b>');
+    expect(html).toContain('&lt;b&gt;oops&lt;/b&gt;');
+  });
+});
+
+describe('the step label inside a shared-subject thread', () => {
+  it('drops the client name, which the heading already carries', () => {
+    const { html, text } = renderBody(
+      { reference: 'AR-0003', title: 'MICA', stepLine: 'MICA — budget and CPL approved' },
+      'Approved.'
+    );
+    expect(html).toContain('Budget and CPL approved');
+    expect(html).not.toContain('MICA — budget');
+    expect(text).toContain('>> Budget and CPL approved');
+  });
+
+  it('leaves a label that does not start with the title alone', () => {
+    const { html } = renderBody(
+      { reference: 'AR-0003', title: 'MICA', stepLine: 'Urgent: client escalation' },
+      'x'
+    );
+    expect(html).toContain('Urgent: client escalation');
+  });
+
+  it('keeps the label when it is nothing but the title', () => {
+    // Trimming to an empty badge would lose the only thing distinguishing
+    // this mail from the others in the trail.
+    const { html } = renderBody(
+      { reference: 'AR-0003', title: 'MICA', stepLine: 'MICA — ' },
+      'x'
+    );
+    expect(html).toContain('MICA');
+  });
+});

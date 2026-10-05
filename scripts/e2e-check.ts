@@ -1030,28 +1030,57 @@ async function main() {
   const adminMail = new Session();
   await adminMail.login(process.env.SEED_ADMIN_EMAIL ?? '', process.env.SEED_ADMIN_PASSWORD ?? '');
 
+  // Only the events, not who they go to. Which audience each route uses is
+  // configuration a Super Admin is entitled to change on the Email page, and
+  // asserting the seeded default here would fail the suite the first time
+  // somebody used the product correctly — the same trap the fixture roles
+  // above exist to avoid. The defaults are pinned in the unit tests, where
+  // they are a code constant rather than a live row.
   const FLOW_EVENTS = [
-    ['REQUEST_SUBMITTED', 'ROLE'],
-    ['REQUEST_SPECIALIST_ASSIGNED', 'AD_SPECIALIST'],
-    ['REQUEST_BUDGET_APPROVED', 'AD_SPECIALIST'],
-    ['REQUEST_ADS_SUBMITTED', 'ROLE'],
-    ['REQUEST_APPROVED', 'AD_SPECIALIST'],
-    ['REQUEST_LIVE', 'ROLE'],
-    ['REQUEST_CHANGES_REQUESTED', 'AD_SPECIALIST'],
-    ['REQUEST_REJECTED', 'REQUESTER'],
+    'REQUEST_SUBMITTED',
+    'REQUEST_SPECIALIST_ASSIGNED',
+    'REQUEST_BUDGET_APPROVED',
+    'REQUEST_ADS_SUBMITTED',
+    'REQUEST_APPROVED',
+    'REQUEST_LIVE',
+    'REQUEST_CHANGES_REQUESTED',
+    'REQUEST_REJECTED',
   ] as const;
 
   const config = await adminMail.json<{
+    settings: { threadPerRequest: boolean };
     routes: Array<{ event: string; audience: string; enabled: boolean }>;
     events: Array<{ event: string }>;
   }>('/api/admin/email');
   check('The Email page lists a route for every flow step', config.status === 200 &&
-    FLOW_EVENTS.every(([e]) => config.body.routes.some((r) => r.event === e)),
+    FLOW_EVENTS.every((e) => config.body.routes.some((r) => r.event === e)),
     `${config.body.routes?.length ?? 0} route(s)`);
 
-  for (const [event, audience] of FLOW_EVENTS) {
-    const route = config.body.routes.find((r) => r.event === event);
-    check(`${event} is addressed to ${audience}`, route?.audience === audience, `got ${route?.audience}`);
+  // One trail per request is the product behaviour, so it is worth asserting:
+  // every mail about one request has to reach the client as the same subject,
+  // give or take the Re: that clients strip before grouping.
+  const subjects: string[] = [];
+  const labels = new Set<string>();
+  for (const event of FLOW_EVENTS) {
+    const p = await adminMail.json<{ subject: string; stepLine: string | null }>(
+      `/api/admin/email/preview?event=${event}`
+    );
+    subjects.push((p.body.subject ?? '').replace(/^Re:\s*/i, ''));
+    if (p.body.stepLine) labels.add(p.body.stepLine);
+  }
+  if (config.body.settings?.threadPerRequest) {
+    check(
+      'Every mail about one request carries the same subject',
+      new Set(subjects).size === 1,
+      Array.from(new Set(subjects)).join(' | ')
+    );
+    check(
+      'And each one still says which step it is, in the body',
+      labels.size === FLOW_EVENTS.length,
+      `${labels.size} distinct label(s) for ${FLOW_EVENTS.length} events`
+    );
+  } else {
+    console.log('  SKIP  One trail per request is switched off; threading not exercised.');
   }
 
   const preview = await adminMail.json<{

@@ -42,13 +42,28 @@ export type EventContext = {
   reasonLabel?: string;
   /** Distinguishes repeats of the same event, e.g. the review round. */
   dedupeKey?: string;
+  /** What this mail is about — the heading, since the subject is shared. */
+  stepLine?: string;
 };
+
+/**
+ * The one event that opens a trail.
+ *
+ * Everything else is a reply to it. When the opening mail is switched off
+ * the next one carries `Re:` with nothing to reply to, which is harmless —
+ * clients thread on the subject regardless.
+ */
+function isFirstMail(event: CrmNotificationType): boolean {
+  return event === 'REQUEST_SUBMITTED';
+}
 
 export type Resolved = {
   to: Address[];
   cc: Address[];
   bcc: Address[];
   subject: string;
+  /** What this particular mail is about, for the body heading. */
+  stepLine?: string;
   /** Why it would not send, when it would not. */
   skipped?: string;
 };
@@ -90,12 +105,21 @@ export async function resolveRecipients(
   };
 
   const prefix = settings.subjectPrefix ? `${renderTemplate(settings.subjectPrefix, vars)} ` : '';
-  const subject = `${prefix}${renderTemplate(route?.subject ?? ctx.title, vars)}`.trim();
 
-  if (!settings.enabled) return { to: [], cc: [], bcc: [], subject, skipped: 'Email is switched off in the settings.' };
-  if (!route) return { to: [], cc: [], bcc: [], subject, skipped: `No route configured for ${event}.` };
-  if (!route.enabled) return { to: [], cc: [], bcc: [], subject, skipped: `The ${event} route is switched off.` };
-  if (!settings.fromEmail) return { to: [], cc: [], bcc: [], subject, skipped: 'No From address is configured.' };
+  // Threading is a property of the subject, not of the headers. Gmail
+  // normalises the subject and groups on that first; References only
+  // reinforces a grouping it has already made. So every mail about one
+  // request gets the same line, and what happened moves into the body.
+  const stepLine = renderTemplate(route?.subject ?? ctx.title, vars);
+  const threadLine = renderTemplate(settings.threadSubject || '{{title}}', vars);
+  const subject = settings.threadPerRequest
+    ? `${isFirstMail(event) ? '' : 'Re: '}${prefix}${threadLine}`.trim()
+    : `${prefix}${stepLine}`.trim();
+
+  if (!settings.enabled) return { to: [], cc: [], bcc: [], subject, stepLine, skipped: 'Email is switched off in the settings.' };
+  if (!route) return { to: [], cc: [], bcc: [], subject, stepLine, skipped: `No route configured for ${event}.` };
+  if (!route.enabled) return { to: [], cc: [], bcc: [], subject, stepLine, skipped: `The ${event} route is switched off.` };
+  if (!settings.fromEmail) return { to: [], cc: [], bcc: [], subject, stepLine, skipped: 'No From address is configured.' };
 
   // Who the audience resolves to, before the fixed addresses are added.
   let audience: Address[] = [];
@@ -131,9 +155,22 @@ export async function resolveRecipients(
   }
 
   if (to.length === 0) {
-    return { to, cc, bcc, subject, skipped: 'The route resolved to nobody.' };
+    return { to, cc, bcc, subject, stepLine, skipped: 'The route resolved to nobody.' };
   }
-  return { to, cc, bcc, subject };
+  return { to, cc, bcc, subject, stepLine };
+}
+
+/** Drop a leading "<title> — " and capitalise what is left. */
+function trimLeadingTitle(line: string, title: string): string {
+  let out = line.trim();
+  for (const sep of [' — ', ' - ', ': ']) {
+    const prefix = `${title}${sep}`;
+    if (out.toLowerCase().startsWith(prefix.toLowerCase())) {
+      out = out.slice(prefix.length).trim();
+      break;
+    }
+  }
+  return out ? out.charAt(0).toUpperCase() + out.slice(1) : line;
 }
 
 function escapeHtml(value: string): string {
@@ -202,6 +239,19 @@ export function renderBody(
       `</div>`
     : '';
 
+  // Every mail in a trail now shares a subject, so this is the only thing
+  // telling them apart in the reading pane. It is deliberately the most
+  // prominent element after the title.
+  // The stored label reads "MICA — budget and CPL approved", which is right
+  // for a subject line but says the client's name twice under a heading that
+  // is already the client's name. Trimmed here rather than changed in the
+  // database, so a subject still reads correctly if one-trail is switched
+  // off and the label becomes the subject again.
+  const step = ctx.stepLine ? trimLeadingTitle(ctx.stepLine, ctx.title) : null;
+  const stepBadge = step
+    ? `<p style="margin:0 0 14px"><span style="display:inline-block;background:#1e293b;color:#fff;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:600;letter-spacing:.01em">${escapeHtml(step)}</span></p>`
+    : '';
+
   const button = ctx.link
     ? `<p style="margin:24px 0 0"><a href="${escapeHtml(ctx.link)}" style="background:#1e293b;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;display:inline-block;font-size:14px">Open the request</a></p>`
     : '';
@@ -210,7 +260,8 @@ export function renderBody(
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:640px;margin:0 auto;padding:24px">
   <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:24px">
     <p style="margin:0 0 4px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#64748b">${escapeHtml(ctx.reference)}${ctx.status ? ` · ${escapeHtml(ctx.status)}` : ''}</p>
-    <h1 style="margin:0 0 14px;font-size:19px;line-height:1.3;color:#0f172a">${escapeHtml(ctx.title)}</h1>
+    <h1 style="margin:0 0 10px;font-size:19px;line-height:1.3;color:#0f172a">${escapeHtml(ctx.title)}</h1>
+    ${stepBadge}
     <p style="margin:0;color:#334155;line-height:1.55;font-size:14px">${escapeHtml(intro)}</p>
     ${reasonHtml}
     ${highlightHtml}
@@ -224,6 +275,7 @@ export function renderBody(
   const text = [
     `${ctx.reference}${ctx.status ? ` · ${ctx.status}` : ''}`,
     ctx.title,
+    step ? `>> ${step}` : '',
     '',
     intro,
     ctx.reason ? `\n${ctx.reasonLabel ?? 'Remarks'}: ${ctx.reason}` : '',
@@ -271,7 +323,7 @@ export async function sendEventEmail(
       ? renderTemplate(route.intro, vars)
       : defaultIntro(event, ctx);
 
-    const { html, text } = renderBody(ctx, intro);
+    const { html, text } = renderBody({ ...ctx, stepLine: resolved.stepLine }, intro);
     const input: SendInput = {
       from: { email: settings.fromEmail, name: settings.fromName },
       to: resolved.to,
@@ -283,10 +335,15 @@ export async function sendEventEmail(
       text,
       // Every mail about one request shares a References value, so a client
       // files the whole conversation as one thread.
+      // References on every mail, In-Reply-To only on a reply: claiming the
+      // opening mail is a reply to a message that was never sent makes some
+      // clients start a second thread rather than join one.
       headers: ctx.requestId
         ? {
             References: `<ad-request-${ctx.requestId}@kollegeapply>`,
-            'In-Reply-To': `<ad-request-${ctx.requestId}@kollegeapply>`,
+            ...(isFirstMail(event)
+              ? {}
+              : { 'In-Reply-To': `<ad-request-${ctx.requestId}@kollegeapply>` }),
           }
         : undefined,
       // Round and status are in the key because a request legitimately hits

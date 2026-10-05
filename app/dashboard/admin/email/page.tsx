@@ -41,6 +41,8 @@ type Settings = {
   fromEmail: string;
   replyTo: string | null;
   subjectPrefix: string | null;
+  threadPerRequest: boolean;
+  threadSubject: string | null;
   globalCc: string | null;
   globalBcc: string | null;
   testModeRecipient: string | null;
@@ -255,6 +257,40 @@ export default function EmailSettingsPage() {
                 />
               </Field>
               <Field
+                id="threadSubject"
+                label="Shared subject"
+                hint={
+                  settings.threadPerRequest
+                    ? `Every mail about one request is sent as: ${settings.subjectPrefix ?? ''} ${settings.threadSubject ?? '{{title}}'}`.trim()
+                    : 'Only used when one trail per request is on.'
+                }
+              >
+                <Input
+                  id="threadSubject"
+                  value={settings.threadSubject ?? ''}
+                  onChange={(e) => set('threadSubject', e.target.value)}
+                  placeholder="{{title}}"
+                  disabled={!settings.threadPerRequest}
+                />
+              </Field>
+              <div className="flex items-start justify-between gap-3 rounded-lg border p-3 sm:col-span-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">One mail trail per request</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Give every notification about a request the same subject so clients file
+                    them as one conversation. Gmail groups by subject before it reads the
+                    threading headers, so a subject that changes per step splits the trail
+                    however correct the headers are. What happened moves into the body, as a
+                    label under the title.
+                  </p>
+                </div>
+                <Switch
+                  checked={settings.threadPerRequest}
+                  aria-label="Keep every mail about a request in one trail"
+                  onCheckedChange={(v) => set('threadPerRequest', v)}
+                />
+              </div>
+              <Field
                 id="globalCc"
                 label="CC on every mail"
                 hint="Comma separated. Added on top of each rule's own CC."
@@ -425,12 +461,14 @@ export default function EmailSettingsPage() {
 
                         <Field
                           id={`${r.event}-subject`}
-                          label="Subject"
+                          label={settings.threadPerRequest ? 'Label in the mail' : 'Subject'}
                           className="sm:col-span-2"
                           hint={
-                            settings.subjectPrefix
-                              ? `Sent as: ${settings.subjectPrefix} ${r.subject}`
-                              : undefined
+                            settings.threadPerRequest
+                              ? 'Shown as a badge under the title. The subject is shared across the trail, so this is what tells the mails apart.'
+                              : settings.subjectPrefix
+                                ? `Sent as: ${settings.subjectPrefix} ${r.subject}`
+                                : undefined
                           }
                         >
                           <Input
