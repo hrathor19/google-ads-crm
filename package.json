@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:lan": "node scripts/dev-lan.js",
     "build": "prisma generate && next build",
     "postinstall": "prisma generate",
     "start": "next start",
