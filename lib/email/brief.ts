@@ -67,7 +67,17 @@ const text = (v: string | null | undefined) => (v && v.trim() ? v.trim() : DASH)
 const count = (v: number | null | undefined) =>
   v === null || v === undefined ? DASH : new Intl.NumberFormat('en-IN').format(v);
 
-export type BriefSection = { heading: string; rows: Array<[string, string]> };
+/**
+ * One fact in the brief.
+ *
+ * `wide` spans the full width — a landing page URL in a half-width cell
+ * wraps onto four lines and undoes the point of the two-column layout.
+ * `always` survives the empty-row cull: the budget and CPL are deliberately
+ * blank in the first mail, and hiding them there would lose the one thing
+ * the reader is checking for.
+ */
+export type BriefRow = { label: string; value: string; wide?: boolean; always?: boolean };
+export type BriefSection = { heading: string; rows: BriefRow[] };
 
 export type RequestBrief = {
   reference: string;
@@ -147,78 +157,85 @@ export async function buildRequestBrief(requestId: string): Promise<RequestBrief
     .map((l) => l.campaign.name)
     .filter((n): n is string => Boolean(n));
 
+  // Six destination fields usually hold the same URL. Printing it six times
+  // is most of the mail's length and tells the reader nothing the first one
+  // did, so identical destinations collapse into a single line naming them.
+  const destinations: Array<[string, string | null]> = [
+    ['KAPP desktop', r.adUrlKapplpDesktop],
+    ['KAPP mobile', r.adUrlKapplpMobile],
+    ['KAPP Bing', r.adUrlKapplpBing],
+    ['Client desktop', r.adUrlClientlpDesktop],
+    ['Client mobile', r.adUrlClientlpMobile],
+    ['Client Bing', r.adUrlClientlpBing],
+  ];
+  const byUrl = new Map<string, string[]>();
+  for (const [label, url] of destinations) {
+    if (!url?.trim()) continue;
+    const key = url.trim();
+    byUrl.set(key, [...(byUrl.get(key) ?? []), label]);
+  }
+  const destinationRows: BriefRow[] = Array.from(byUrl.entries()).map(([url, labels]) => ({
+    label: labels.length === destinations.length ? 'All destinations' : labels.join(', '),
+    value: url,
+    wide: true,
+  }));
+
   const sections: BriefSection[] = [
     {
       heading: 'Campaign',
       rows: [
-        ['Tracking ID', text(r.trackingId)],
-        ['Client type', r.clientType ? (CLIENT_TYPE_LABELS[r.clientType] ?? r.clientType) : DASH],
-        ['Product / service', text(r.productService)],
-        ['Objective', OBJECTIVE_LABELS[r.objective] ?? r.objective],
-        ['Google Ads account', text(r.account?.descriptive_name)],
-        ['Campaigns', campaigns.length ? campaigns.join(', ') : DASH],
+        { label: 'Tracking ID', value: text(r.trackingId) },
+        {
+          label: 'Client type',
+          value: r.clientType ? (CLIENT_TYPE_LABELS[r.clientType] ?? r.clientType) : DASH,
+        },
+        { label: 'Objective', value: OBJECTIVE_LABELS[r.objective] ?? r.objective },
+        { label: 'Google Ads account', value: text(r.account?.descriptive_name) },
+        { label: 'Product / service', value: text(r.productService), wide: true },
+        { label: 'Campaigns', value: campaigns.join(', ') || DASH },
+        { label: 'Performance parameter', value: text(r.performanceParameter) },
       ],
     },
     {
-      heading: 'Targeting',
+      heading: 'Targeting and timing',
       rows: [
-        ['Location', text(r.location)],
-        ['Blocked locations', text(r.blockedLocations)],
-        [
-          'Age restriction',
-          r.ageRestriction ? (AGE_LABELS[r.ageRestriction] ?? r.ageRestriction) : DASH,
-        ],
+        { label: 'Location', value: text(r.location) },
+        { label: 'Blocked locations', value: text(r.blockedLocations) },
+        {
+          label: 'Age restriction',
+          value: r.ageRestriction ? (AGE_LABELS[r.ageRestriction] ?? r.ageRestriction) : DASH,
+        },
+        { label: 'Start date', value: date(r.startDate) },
+        { label: 'Focused months', value: text(r.focusedMonths) },
+        { label: 'Application deadline', value: text(r.applicationDeadline) },
       ],
     },
     {
-      heading: 'Timing',
+      // Budget, CPL and required leads are in the strip at the top; repeating
+      // them here was a third of this section for no new information.
+      heading: 'Targets',
       rows: [
-        ['Start date', date(r.startDate)],
-        ['Focused months', text(r.focusedMonths)],
-        ['Application deadline', text(r.applicationDeadline)],
+        { label: 'Target application', value: count(r.targetApplication) },
+        { label: 'Target admission', value: text(r.targetAdmission) },
+        { label: 'Monthly lead targets', value: monthly || DASH, wide: true },
       ],
     },
-    {
-      // The step-10 decision. Blank until a Manager makes it, which is the
-      // difference between the first mail and every one after it.
-      heading: 'Budget and targets',
-      rows: [
-        ['Assigned budget', rupees(r.budget)],
-        ['Required CPL', rupees(r.requiredCpl)],
-        ['Required leads', count(r.requiredLeads)],
-        ['Target application', count(r.targetApplication)],
-        ['Target admission', text(r.targetAdmission)],
-        ['Monthly lead targets', monthly || DASH],
-        ['Performance parameter', text(r.performanceParameter)],
-      ],
-    },
-    {
-      heading: 'Destinations',
-      rows: [
-        ['KAPP LP — desktop', text(r.adUrlKapplpDesktop)],
-        ['KAPP LP — mobile', text(r.adUrlKapplpMobile)],
-        ['KAPP LP — Bing', text(r.adUrlKapplpBing)],
-        ['Client LP — desktop', text(r.adUrlClientlpDesktop)],
-        ['Client LP — mobile', text(r.adUrlClientlpMobile)],
-        ['Client LP — Bing', text(r.adUrlClientlpBing)],
-      ],
-    },
+    { heading: 'Destinations', rows: destinationRows },
     {
       heading: 'Notes',
       rows: [
-        ['USPs and offers', text(r.usps)],
-        ['Keywords', text(r.keywords)],
-        ['Reporting panel', text(r.reportingPanel)],
-        ['Account visibility', text(r.accountVisibility)],
-        ['Other notes', text(r.notes)],
+        { label: 'Reporting panel', value: text(r.reportingPanel) },
+        { label: 'Account visibility', value: text(r.accountVisibility) },
+        { label: 'USPs and offers', value: text(r.usps), wide: true },
+        { label: 'Keywords', value: text(r.keywords), wide: true },
+        { label: 'Other notes', value: text(r.notes), wide: true },
       ],
     },
     {
       heading: 'People',
       rows: [
-        ['Raised by', r.createdBy.name || r.createdBy.email],
-        ['Manager', r.accountManager?.name ?? DASH],
-        ['Ad Specialist', r.adSpecialist?.name ?? DASH],
+        { label: 'Raised by', value: r.createdBy.name || r.createdBy.email, always: true },
+        { label: 'Ad Specialist', value: r.adSpecialist?.name ?? DASH, always: true },
       ],
     },
   ];

@@ -138,8 +138,8 @@ describe('the rendered mail', () => {
       {
         ...base,
         sections: [
-          { heading: 'Campaign', rows: [['Tracking ID', '13000047']] },
-          { heading: 'Timing', rows: [['Start date', '02 Oct 2026']] },
+          { heading: 'Campaign', rows: [{ label: 'Tracking ID', value: '13000047' }] },
+          { heading: 'Timing', rows: [{ label: 'Start date', value: '02 Oct 2026' }] },
         ],
       },
       'Raised.'
@@ -211,5 +211,84 @@ describe('the step label inside a shared-subject thread', () => {
       'x'
     );
     expect(html).toContain('MICA');
+  });
+});
+
+describe('keeping the brief to one screen', () => {
+  const row = (label: string, value: string, extra = {}) => ({ label, value, ...extra });
+
+  it('drops facts nobody filled in', () => {
+    const { html, text } = renderBody(
+      {
+        reference: 'AR-0005',
+        title: 'MMU',
+        sections: [
+          { heading: 'Notes', rows: [row('Keywords', '—'), row('Reporting panel', 'NPF')] },
+        ],
+      },
+      'x'
+    );
+    expect(html).toContain('Reporting panel');
+    expect(html).not.toContain('Keywords');
+    expect(text).not.toContain('Keywords');
+  });
+
+  it('keeps a blank the reader is specifically checking for', () => {
+    // The budget is deliberately empty in the first mail. Hiding it would
+    // read as "not asked for" rather than "not decided yet".
+    const { html } = renderBody(
+      {
+        reference: 'AR-0005',
+        title: 'MMU',
+        sections: [{ heading: 'People', rows: [row('Manager', '—', { always: true })] }],
+      },
+      'x'
+    );
+    expect(html).toContain('Manager');
+  });
+
+  it('drops a section that ends up with nothing in it', () => {
+    const { html } = renderBody(
+      {
+        reference: 'AR-0005',
+        title: 'MMU',
+        sections: [{ heading: 'Destinations', rows: [row('KAPP LP', '—')] }],
+      },
+      'x'
+    );
+    expect(html).not.toContain('Destinations');
+  });
+
+  it('pairs two facts onto one line', () => {
+    const { html } = renderBody(
+      {
+        reference: 'AR-0005',
+        title: 'MMU',
+        sections: [
+          { heading: 'Targeting', rows: [row('Location', 'Delhi'), row('Age restriction', 'Open')] },
+        ],
+      },
+      'x'
+    );
+    // One row carrying both, rather than a row each.
+    const body = html.slice(html.indexOf('Targeting'));
+    expect((body.match(/<tr>/g) ?? []).length).toBe(1);
+  });
+
+  it('gives a long value the whole width', () => {
+    const { html } = renderBody(
+      {
+        reference: 'AR-0005',
+        title: 'MMU',
+        sections: [
+          {
+            heading: 'Destinations',
+            rows: [row('All destinations', 'https://lp.kollegeapply.com/MICA2027', { wide: true })],
+          },
+        ],
+      },
+      'x'
+    );
+    expect(html).toContain('colspan="2"');
   });
 });

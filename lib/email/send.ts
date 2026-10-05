@@ -3,7 +3,7 @@ import type { CrmNotificationType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { usersWithPermission } from '@/lib/notifications';
 import { sendViaBrevo, type Address, type SendInput } from './brevo';
-import type { BriefSection } from './brief';
+import type { BriefRow, BriefSection } from './brief';
 import {
   getEmailRoutes,
   getEmailSettings,
@@ -209,12 +209,42 @@ export function renderBody(
 
   const factRows = facts.map(row).join('');
 
+  // Two facts per line, not one. The brief ran to thirty-odd stacked rows
+  // and needed three screens on a phone; paired up and with the blanks
+  // dropped it fits in one view, which is the only way anyone reads it
+  // before acting on it.
+  const EMPTY = new Set(['—', '', '-']);
+  const cell = (r: BriefRow, span: number) =>
+    `<td colspan="${span}" style="padding:5px 12px 5px 0;vertical-align:top">` +
+    `<div style="font-size:11px;color:#94a3b8;letter-spacing:.02em">${escapeHtml(r.label)}</div>` +
+    `<div style="font-size:13px;color:#0f172a;word-break:break-word">${escapeHtml(r.value)}</div>` +
+    `</td>`;
+
   const sectionHtml = sections
-    .map(
-      (sec) =>
-        `<p style="margin:22px 0 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;border-bottom:1px solid #e2e8f0;padding-bottom:6px">${escapeHtml(sec.heading)}</p>` +
-        `<table role="presentation" width="100%" style="border-collapse:collapse;table-layout:fixed">${sec.rows.map(row).join('')}</table>`
-    )
+    .map((sec) => {
+      const kept = sec.rows.filter((r) => r.always || !EMPTY.has(r.value.trim()));
+      if (kept.length === 0) return '';
+
+      // Narrow facts first so they pair up without gaps, then the
+      // full-width ones. Interleaved, a single wide row in the middle of a
+      // section orphans the fact on either side of it and leaves a column of
+      // white space down the right.
+      const narrow = kept.filter((r) => !r.wide);
+      const wide = kept.filter((r) => r.wide);
+
+      const lines: string[] = [];
+      for (let i = 0; i < narrow.length; i += 2) {
+        const left = narrow[i]!;
+        const right = narrow[i + 1];
+        lines.push(`<tr>${cell(left, 1)}${right ? cell(right, 1) : '<td></td>'}</tr>`);
+      }
+      for (const r of wide) lines.push(`<tr>${cell(r, 2)}</tr>`);
+
+      return (
+        `<p style="margin:18px 0 4px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#94a3b8;border-bottom:1px solid #e2e8f0;padding-bottom:5px">${escapeHtml(sec.heading)}</p>` +
+        `<table role="presentation" width="100%" style="border-collapse:collapse;table-layout:fixed">${lines.join('')}</table>`
+      );
+    })
     .join('');
 
   // The three figures the flow turns on, side by side. A muted one is the
@@ -281,9 +311,11 @@ export function renderBody(
     ctx.reason ? `\n${ctx.reasonLabel ?? 'Remarks'}: ${ctx.reason}` : '',
     highlights.length ? `\n${highlights.map((h) => `${h.label}: ${h.value}`).join('\n')}` : '',
     facts.length ? `\n${facts.map(([k, v]) => `${k}: ${v}`).join('\n')}` : '',
-    ...sections.map(
-      (sec) => `\n${sec.heading.toUpperCase()}\n${sec.rows.map(([k, v]) => `  ${k}: ${v}`).join('\n')}`
-    ),
+    ...sections.map((sec) => {
+      const kept = sec.rows.filter((r) => r.always || !['—', '', '-'].includes(r.value.trim()));
+      if (kept.length === 0) return '';
+      return `\n${sec.heading.toUpperCase()}\n${kept.map((r) => `  ${r.label}: ${r.value}`).join('\n')}`;
+    }),
     ctx.link ? `\nOpen the request: ${ctx.link}` : '',
   ]
     .filter(Boolean)
