@@ -19,6 +19,16 @@ const DEFAULTS_BY_SLUG: Record<string, Set<string>> = Object.fromEntries(
 export type Principal = {
   userId: string;
   email: string;
+  /**
+   * How this person is named to other people.
+   *
+   * Null when the account has no name on record. Everything user-facing
+   * should prefer it over the address: the timeline and the workflow mails
+   * both read "<someone> submitted the requirement", and an email address
+   * in that sentence is both unfriendly and, in a mail client, a mailto
+   * link. The audit log deliberately keeps the address instead.
+   */
+  name: string | null;
   roleId: string;
   roleSlug: string;
   roleName: string;
@@ -31,6 +41,11 @@ export type Principal = {
   allowedAccountIds: number[] | null;
   mustChangePassword: boolean;
 };
+
+/** The name to show, falling back to the address only when there is none. */
+export function actorLabel(principal: Pick<Principal, 'name' | 'email'>): string {
+  return principal.name?.trim() || principal.email;
+}
 
 /**
  * Resolve every permission for a role into a flat map.

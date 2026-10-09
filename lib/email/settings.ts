@@ -2,7 +2,7 @@ import 'server-only';
 import type { CrmNotificationType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
-import type { Address } from './brevo';
+import type { Address } from './infinito';
 
 /**
  * Who gets which mail, and what it says in the subject line.

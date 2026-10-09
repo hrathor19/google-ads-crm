@@ -63,6 +63,7 @@ export async function requireUser(
   return {
     userId: session.user.id,
     email: session.user.email,
+    name: session.user.name ?? null,
     roleId: session.user.roleId,
     roleSlug: session.user.roleSlug,
     roleName: session.user.roleName,

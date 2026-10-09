@@ -211,7 +211,7 @@ Reused from the Google Ads Intelligence project:
 | `GEMINI_API_KEY` | AI ad copy. Without it the deterministic engine runs. |
 | `GEMINI_MODEL` | Defaults to `gemini-flash-lite-latest` |
 | `APP_ENV`, `APP_DEBUG`, `SCHEDULER_ENABLED` | Carried over; informational |
-| `SESSION_SECRET`, `AUTH_*`, `SMTP_*`, `BREVO_API_KEY`, `PUBLIC_BASE_URL` | Carried over from the source `.env`; not read by this app |
+| `SESSION_SECRET`, `AUTH_*`, `SMTP_*`, `INFINITO_*`, `PUBLIC_BASE_URL` | Carried over from the source `.env`; not read by this app |
 
 Added by this app:
 

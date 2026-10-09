@@ -2,8 +2,10 @@ import { badRequest, clientIp, handle, notFound, parseBody, prisma, requirePermi
 import { logAudit } from '@/lib/audit';
 import { analyzeLandingPage } from '@/lib/ai/landing-page';
 import { scoreLandingPage } from '@/lib/ai/landing-quality';
+import { scoreAndStore } from '@/lib/ai/landing-score-store';
 import { landingScoreSchema } from '@/lib/ai/schemas';
 import { assertVisible } from '@/lib/workflow/ad-requests';
+import { actorLabel } from '@/lib/rbac/permissions';
 
 export const dynamic = 'force-dynamic';
 // The scorer fetches the page and probes up to 15 links.
@@ -31,36 +33,21 @@ export async function POST(req: Request) {
     const score = scoreLandingPage(page);
     if (!score.available) throw badRequest('That page could not be scored.');
 
-    const saved = await prisma.crmLandingScore.create({
-      data: {
-        requestId: body.requestId ?? null,
-        url: body.url,
-        score: score.score,
-        grade: score.grade,
-        pageType: score.pageType,
-        passed: score.passed,
-        maxPoints: score.max,
-        checks: score.checks,
-        categories: JSON.parse(JSON.stringify(score.categories)),
-        suggestions: score.suggestions,
-        tracking: page.tracking ? JSON.parse(JSON.stringify(page.tracking)) : undefined,
-        links: {
-          external: score.externalLinks,
-          externalCount: score.externalLinkCount,
-          broken: score.brokenLinks,
-          checked: score.linksChecked,
-        },
-        createdById: principal.userId,
-      },
-      select: { id: true, createdAt: true },
+    // Stored through the shared helper, so a score taken here and one taken
+    // automatically before a mail are produced by the same code.
+    const saved = await scoreAndStore({
+      url: body.url,
+      requestId: body.requestId ?? null,
+      createdById: principal.userId,
     });
+    if (!saved) throw badRequest('That page could not be scored.');
 
     if (body.requestId) {
       await prisma.crmAdRequestEvent.create({
         data: {
           requestId: body.requestId,
           type: 'LANDING_SCORED',
-          message: `${principal.email} scored the landing page: ${score.score}/100 (grade ${score.grade}).`,
+          message: `${actorLabel(principal)} scored the landing page: ${score.score}/100 (grade ${score.grade}).`,
           actorId: principal.userId,
         },
       });

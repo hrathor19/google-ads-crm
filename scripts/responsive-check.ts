@@ -37,6 +37,7 @@ const PAGES = [
   '/dashboard/ad-requests',
   '/dashboard/ad-requests/new',
   '/dashboard/assigned',
+  '/dashboard/keyword-research',
   '/dashboard/ad-copy',
   '/dashboard/landing-score',
   '/dashboard/admin/users',

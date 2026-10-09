@@ -22,6 +22,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useApi } from '@/lib/hooks/use-api';
+import { MultiSelect } from '@/components/data/multi-select';
+import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/format';
 
 /**
@@ -34,6 +36,9 @@ import { formatCurrency } from '@/lib/format';
  * "Account Manager assigned" produced a 400 with nowhere to answer it.
  */
 
+/** Google refuses more than this on one request, and so does the API. */
+const MAX_LINKED_CAMPAIGNS = 50;
+
 export type TransitionPayload = {
   reason?: string;
   accountManagerId?: string;
@@ -42,6 +47,7 @@ export type TransitionPayload = {
   budget?: number;
   requiredCpl?: number;
   linkedCampaignId?: string;
+  campaignIds?: number[];
 };
 
 /** What each step needs before the server will accept it. */
@@ -54,10 +60,14 @@ const STEP_CONFIG: Record<
     assign?: { field: 'accountManagerId' | 'adSpecialistId'; permission: string; label: string };
     needsReason?: boolean;
     /**
-     * Offer the Google Ads account. The Ops requirement form does not ask for
-     * one, so unless it is named at an assignment step the request can never
-     * be matched to the synced performance data — the Assigned campaigns page
-     * would show the handover with nothing under it.
+     * Offer the Google Ads account.
+     *
+     * Only at launch. The Ops requirement form does not ask for one and the
+     * Manager assigning the work does not know it yet — which account a
+     * campaign ends up in is the Ad Specialist's decision, taken when they
+     * build it. Asking at assignment made the Manager guess, and a guess
+     * here points the Assigned campaigns page at the wrong account's
+     * performance.
      */
     offersAccount?: boolean;
     needsBudget?: boolean;
@@ -81,7 +91,6 @@ const STEP_CONFIG: Record<
       permission: 'AD_REQUESTS:BUILD',
       label: 'Ad Specialist',
     },
-    offersAccount: true,
     // Asked here rather than after the review: the Ad Specialist cannot
     // sensibly build without knowing the budget and the CPL they are
     // building to.
@@ -107,10 +116,10 @@ const STEP_CONFIG: Record<
     title: 'Mark the campaign live',
     description: 'Link the Google Ads campaign you created, so the two stay connected.',
     needsCampaignId: true,
-    // Also here, not only at the assignment steps: a request that reaches
-    // launch without an account has no other moment left to acquire one, and
-    // the account is what keeps the reporting working if the campaign is
-    // later rebuilt under a new ID.
+    // The one place it is asked. By now the Ad Specialist has built the
+    // campaign and knows which account it lives in, and the account is what
+    // keeps the reporting working if the campaign is later rebuilt under a
+    // new ID.
     offersAccount: true,
     confirmLabel: 'Mark live',
   },
@@ -163,7 +172,8 @@ export function TransitionDialog({
   const [assigneeId, setAssigneeId] = useState('');
   const [budget, setBudget] = useState('');
   const [cpl, setCpl] = useState('');
-  const [campaignId, setCampaignId] = useState('');
+  const [campaignIds, setCampaignIds] = useState<string[]>([]);
+  const [onlyEnabled, setOnlyEnabled] = useState(true);
   const [accountId, setAccountId] = useState('');
 
   // Clear between openings, so yesterday's rejection reason cannot be sent
@@ -175,7 +185,8 @@ export function TransitionDialog({
     setAssigneeId('');
     setBudget('');
     setCpl('');
-    setCampaignId('');
+    setCampaignIds([]);
+    setOnlyEnabled(true);
     setAccountId(currentAccountId != null ? String(currentAccountId) : '');
   }, [target, currentAccountId]);
 
@@ -194,6 +205,22 @@ export function TransitionDialog({
     staleTime: 5 * 60_000,
   });
 
+  // The campaigns in the chosen account. Fetched per account rather than
+  // all at once: an MCC's full campaign list is thousands of rows, and the
+  // only ones that can be linked are the ones in the account being launched
+  // into.
+  const { data: campaignData, isLoading: loadingCampaigns } = useApi<{
+    campaigns: Array<{
+      id: number;
+      campaignId: string;
+      name: string | null;
+      status: string | null;
+    }>;
+  }>(['campaign-options', accountId], `/api/campaigns/options?accountId=${accountId}`, {
+    enabled: Boolean(config?.needsCampaignId) && accountId !== '',
+    staleTime: 5 * 60_000,
+  });
+
   if (!target || !config) return null;
 
   const budgetNum = Number(budget);
@@ -206,7 +233,19 @@ export function TransitionDialog({
     (!config.assign || assigneeId !== '') &&
     (!config.needsReason || reason.trim().length > 0) &&
     (!config.needsBudget || (budgetNum > 0 && cplNum > 0)) &&
-    (!campaignIdRequired || campaignId.trim().length > 0);
+    (!campaignIdRequired || campaignIds.length > 0);
+
+  // A ticked campaign is always shown, whatever the filter says — hiding a
+  // selection behind a filter is how one gets unticked without being seen.
+  const campaignOptions = (campaignData?.campaigns ?? [])
+    .filter(
+      (c) => campaignIds.includes(String(c.id)) || !onlyEnabled || c.status === 'ENABLED'
+    )
+    .map((c) => ({
+      value: String(c.id),
+      label: c.name ?? c.campaignId,
+      group: c.status ?? 'Unknown',
+    }));
 
   // How many leads the budget implies, as a sanity check on the pair.
   const impliedLeads = budgetNum > 0 && cplNum > 0 ? Math.floor(budgetNum / cplNum) : null;
@@ -220,8 +259,8 @@ export function TransitionDialog({
       payload.requiredCpl = cplNum;
     }
     if (config!.offersAccount && accountId) payload.accountId = Number(accountId);
-    if (config!.needsCampaignId && campaignId.trim()) {
-      payload.linkedCampaignId = campaignId.trim();
+    if (config!.needsCampaignId && campaignIds.length > 0) {
+      payload.campaignIds = campaignIds.map(Number);
     }
     onConfirm(payload);
   }
@@ -353,18 +392,56 @@ export function TransitionDialog({
               </p>
             ) : (
               <div className="space-y-1.5">
-                <Label htmlFor="campaignId">
-                  Google Ads campaign ID <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="campaignId"
-                  value={campaignId}
-                  onChange={(e) => setCampaignId(e.target.value)}
-                  placeholder="e.g. 21345678901"
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label htmlFor="campaigns">
+                    Campaigns <span className="text-destructive">*</span>
+                  </Label>
+                  {accountId !== '' && (
+                    <button
+                      type="button"
+                      aria-pressed={onlyEnabled}
+                      onClick={() => setOnlyEnabled((v) => !v)}
+                      className={cn(
+                        'rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors',
+                        onlyEnabled
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                      )}
+                    >
+                      Enabled only
+                    </button>
+                  )}
+                </div>
+                {/* Picked from the account, not typed. A campaign ID is an
+                    eleven-digit number copied from another tab, and one
+                    wrong digit silently pointed the request's reporting at
+                    somebody else's campaign. */}
+                <MultiSelect
+                  id="campaigns"
+                  options={campaignOptions}
+                  selected={campaignIds}
+                  onChange={setCampaignIds}
+                  disabled={accountId === ''}
+                  placeholder={
+                    accountId === ''
+                      ? 'Choose the account first'
+                      : loadingCampaigns
+                        ? 'Loading campaigns…'
+                        : 'Pick the campaigns you built'
+                  }
+                  searchPlaceholder="Campaign name…"
+                  emptyMessage={
+                    loadingCampaigns
+                      ? 'Loading…'
+                      : onlyEnabled
+                        ? 'No enabled campaigns in this account. Turn off "Enabled only" to see the rest.'
+                        : 'No campaigns in this account yet.'
+                  }
+                  maxSelected={MAX_LINKED_CAMPAIGNS}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Nothing is linked yet. Cancel and use &ldquo;Link campaigns&rdquo; to pick
-                  them from the list — a client usually runs more than one.
+                  A client usually runs more than one — pick every campaign this request should
+                  report on.
                 </p>
               </div>
             ))}

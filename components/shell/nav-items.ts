@@ -8,6 +8,7 @@ import {
   Gauge,
   KeyRound,
   LayoutDashboard,
+  Lightbulb,
   LineChart,
   ListChecks,
   Mail,
@@ -87,6 +88,14 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Target,
         requires: [['AD_REQUESTS', 'VIEW']],
         requiresAll: [['CAMPAIGNS', 'VIEW']],
+      },
+      {
+        // With the other two tools rather than with the keyword reports: this
+        // is where a brief gets built, not where a live campaign gets read.
+        href: '/dashboard/keyword-research',
+        label: 'Keyword research',
+        icon: Lightbulb,
+        requires: [['KEYWORD_PLANNER', 'VIEW']],
       },
       {
         href: '/dashboard/ad-copy',

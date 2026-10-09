@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { badRequest, clientIp, handle, parseBody, prisma, requirePermission } from '@/lib/api';
 import { logAudit } from '@/lib/audit';
-import { testBrevoConnection } from '@/lib/email/brevo';
+import { env } from '@/lib/env';
+import { testEmailConnection } from '@/lib/email/infinito';
 import {
   EMAIL_EVENTS,
   RECIPIENTS,
@@ -10,6 +11,7 @@ import {
   invalidAddresses,
   isEmail,
   parseAddress,
+  parseAddressList,
 } from '@/lib/email/settings';
 
 export const dynamic = 'force-dynamic';
@@ -91,9 +93,47 @@ export async function GET() {
   return handle(async () => {
     await requirePermission('INTEGRATIONS', 'MANAGE');
     const [settings, routes] = await Promise.all([getEmailSettings(), getEmailRoutes()]);
-    const connection = await testBrevoConnection();
+    const connection = await testEmailConnection();
+
+    // Which suppressed addresses belong to a real, active user.
+    //
+    // The list exists to keep shared logins out of role-based recipients, but
+    // nothing stopped a working colleague going on it — and then every mail
+    // addressed to their role silently dropped them. That is exactly what
+    // happened: the Manager was on this list, so "Operations raised a
+    // request", which goes to the Manager, reached nobody but a Super Admin
+    // who happens to hold every permission. Surfaced here because the
+    // suppression is invisible from every other screen.
+    const suppressedList = parseAddressList(settings.suppressedEmails).map((a) =>
+      a.email.toLowerCase()
+    );
+    const suppressedUsers = suppressedList.length
+      ? (
+          await prisma.crmUser.findMany({
+            where: { email: { in: suppressedList, mode: 'insensitive' }, isActive: true },
+            select: { email: true, name: true, role: { select: { name: true } } },
+          })
+        ).map((u) => ({ email: u.email, name: u.name, role: u.role.name }))
+      : [];
+
+    // Whether the From address sits on the domain Infinito is provisioned
+    // for. Not a hard rule — the account may well be allowed to send for
+    // others — but a mismatch is the first thing to suspect when the API
+    // keeps answering "Success" and nothing arrives, and it is invisible
+    // from this screen otherwise. The provisioned domain comes from the
+    // delivery-receipt host, which is the one address Infinito gave us.
+    const provisionedDomain = env.email().infinitoDlrUrl.replace(/^https?:\/\//, '').split('/')[0] ?? '';
+    const fromDomain = (settings.fromEmail.split('@')[1] ?? '').toLowerCase();
+    const sender = {
+      provisionedDomain,
+      fromDomain,
+      matches: !provisionedDomain || !fromDomain || fromDomain === provisionedDomain.toLowerCase(),
+    };
+
     return {
       settings,
+      suppressedUsers,
+      sender,
       // Filtered to the catalogue, not just sorted by it: a route row for a
       // retired event would otherwise render as a bare enum name with no
       // description, and an operator could configure something that nothing

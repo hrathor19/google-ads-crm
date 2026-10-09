@@ -8,6 +8,7 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { ALL_FEATURES, SEED_ROLES } from '@/lib/rbac/features';
+import { buildRequestBrief } from '@/lib/email/brief';
 
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3000';
 const prisma = new PrismaClient();
@@ -222,6 +223,7 @@ async function cleanUpFixtures(): Promise<void> {
     'e2e.accountmanager@example.com',
     'e2e.pending-password@example.com',
     'e2e.exporter-no-money@example.com',
+    'e2e.planner-blocked@example.com',
   ];
   const users = await prisma.crmUser.findMany({
     where: { email: { in: emails } },
@@ -245,8 +247,64 @@ async function cleanUpFixtures(): Promise<void> {
   await prisma.crmRole.deleteMany({ where: { slug: { startsWith: 'e2e-' } } });
 }
 
+/**
+ * Point every mail this run triggers at a sink, and put the real settings
+ * back when it is done.
+ *
+ * This suite drives the real workflow over HTTP, and every transition it
+ * makes sends the real mail to the real recipients — the roles resolved
+ * from the permission matrix, the global CC, and whatever each route adds.
+ * So a test run mailed colleagues who had nothing to do with it, one copy
+ * per transition, with a fixture college in the subject line.
+ *
+ * It cannot be fixed inside this process: the server does the sending, and
+ * it reads these settings fresh on every mail. The settings row is the one
+ * thing both sides share, so the switch goes there.
+ *
+ * `enabled` is deliberately left alone — the send path still resolves
+ * recipients and renders the body, so a regression in either still fails
+ * the run. Only the address at the end changes. `.invalid` can never
+ * resolve (RFC 6761), so nothing is delivered and nothing bounces to a
+ * person. The subdomain is not decoration: the settings validator wants a
+ * dot in the domain, and a bare `@invalid` fails the save it is testing.
+ */
+const MAIL_SINK = process.env.E2E_MAIL_SINK ?? 'e2e-sink@e2e.invalid';
+
+/** The real recipient, held while the suite runs. `undefined` = not muted. */
+let realTestRecipient: string | null | undefined;
+
+async function muteEmail(): Promise<void> {
+  const before = await prisma.crmEmailSetting.findUnique({
+    where: { id: 1 },
+    select: { testModeRecipient: true },
+  });
+  // No settings row means nothing is configured and nothing can be sent.
+  if (!before) return;
+  realTestRecipient = before.testModeRecipient;
+  await prisma.crmEmailSetting.update({
+    where: { id: 1 },
+    data: { testModeRecipient: MAIL_SINK },
+  });
+  console.log(`Mail muted — every mail this run sends goes to ${MAIL_SINK}`);
+}
+
+/**
+ * Always called, however the run ends, or the next person to use the app
+ * finds their mail silently diverted to a sink.
+ */
+async function restoreEmail(): Promise<void> {
+  if (realTestRecipient === undefined) return;
+  await prisma.crmEmailSetting.update({
+    where: { id: 1 },
+    data: { testModeRecipient: realTestRecipient },
+  });
+  realTestRecipient = undefined;
+}
+
 async function main() {
   console.log(`\nRunning against ${BASE}\n`);
+
+  await muteEmail();
 
   console.log('Setting up test users…');
   const ops = await ensureUser('e2e.ops@kollegeapply.com', 'E2E Operations', 'operations');
@@ -341,7 +399,7 @@ async function main() {
 
   const opsCopy = await opsSession.json('/api/ai/ad-copy', {
     method: 'POST',
-    body: JSON.stringify({ tone: 'professional', product: 'x', landingPageUrl: 'https://example.com' }),
+    body: JSON.stringify({ product: 'x', landingPageUrl: 'https://example.com' }),
   });
   check('Operations cannot generate AI copy', opsCopy.status === 403, `got ${opsCopy.status}`);
 
@@ -352,7 +410,9 @@ async function main() {
     {
       method: 'POST',
       body: JSON.stringify({
-        title: 'E2E check — MBA Admissions 2026',
+        // A realistic client name, because the generator now reads this as
+        // the college and has to put it in the headlines.
+        title: 'Christ University — MBA Admissions 2026',
         objective: 'LEAD_GENERATION',
         productService: 'Two-year full-time MBA',
         targetAudience: 'Graduates aged 21-26 in India',
@@ -368,6 +428,69 @@ async function main() {
   check('Operations creates a draft', created.status === 200 && created.body.status === 'DRAFT', created.body?.reference);
   const requestId = created.body.id;
 
+  // ── The month-by-month lead plan survives an edit ──
+  // It is a relation, so it was not in the PATCH handler's scalar loop and
+  // nothing else wrote it: every edit silently discarded the plan Ops had
+  // typed, and it was then missing from the brief mail with no error
+  // anywhere to say why.
+  const withPlan = await opsSession.json(`/api/ad-requests/${requestId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      leadTargets: [
+        { month: '2026-11', leads: 80 },
+        { month: '2026-12', leads: 120 },
+        { month: '2027-01', leads: 160 },
+      ],
+    }),
+  });
+  check('Operations adds a month-by-month lead plan', withPlan.status === 200, `got ${withPlan.status}`);
+
+  const storedPlan = await prisma.crmAdRequestLeadTarget.findMany({
+    where: { requestId },
+    orderBy: { month: 'asc' },
+    select: { month: true, leads: true },
+  });
+  check(
+    'And editing the request keeps it',
+    storedPlan.length === 3 && storedPlan.map((t) => t.leads).join(',') === '80,120,160',
+    storedPlan.map((t) => `${t.month.toISOString().slice(0, 7)}:${t.leads}`).join(' ') || 'nothing stored'
+  );
+
+  // A second edit that names the months again has to replace, not append —
+  // a month the user deleted must disappear.
+  await opsSession.json(`/api/ad-requests/${requestId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ leadTargets: [{ month: '2026-11', leads: 90 }] }),
+  });
+  const replaced = await prisma.crmAdRequestLeadTarget.findMany({ where: { requestId } });
+  check(
+    'A later edit replaces the plan rather than appending to it',
+    replaced.length === 1 && replaced[0]!.leads === 90,
+    `${replaced.length} row(s)`
+  );
+
+  // Put the full plan back so the brief mail below has something to show.
+  await opsSession.json(`/api/ad-requests/${requestId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      leadTargets: [
+        { month: '2026-11', leads: 80 },
+        { month: '2026-12', leads: 120 },
+        { month: '2027-01', leads: 160 },
+      ],
+    }),
+  });
+
+  // And it reaches the mail that announces what Ops asked for, which is the
+  // one it used to be filtered out of as a "not an Ops field".
+  const opsBrief = await buildRequestBrief(requestId, { onlyOpsFields: true });
+  const planTable = opsBrief?.tables.find((t) => /month/i.test(t.heading));
+  check(
+    'The plan reaches the first brief mail, as a table with a total',
+    Boolean(planTable) && planTable!.body.length === 3 && planTable!.foot?.[1] === '360',
+    planTable ? `${planTable.body.length} rows, total ${planTable.foot?.[1]}` : 'no table in the brief'
+  );
+
   const submitted = await opsSession.json<{ status: string }>(
     `/api/ad-requests/${requestId}/transition`,
     { method: 'POST', body: JSON.stringify({ target: 'SUBMITTED' }) }
@@ -376,6 +499,26 @@ async function main() {
     'Operations submits, and the system advances to awaiting an Account Manager',
     submitted.status === 200 && submitted.body.status === 'AWAITING_AM_ASSIGNMENT',
     `got ${submitted.body?.status}`
+  );
+
+  // The brief closes to edits once it has been submitted, which is also why
+  // the edit page refuses to render a form for it: somebody filled in a
+  // month-by-month lead plan on a submitted request, saved, and the save
+  // came back 409 while the form sat there still showing their numbers.
+  const lateEdit = await opsSession.json<{ error: string }>(`/api/ad-requests/${requestId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ leadTargets: [{ month: '2027-06', leads: 999 }] }),
+  });
+  check(
+    'A submitted request refuses an edit to its lead plan',
+    lateEdit.status === 409,
+    lateEdit.body?.error ?? `got ${lateEdit.status}`
+  );
+  const untouched = await prisma.crmAdRequestLeadTarget.findMany({ where: { requestId } });
+  check(
+    'And the refusal leaves the stored plan exactly as it was',
+    untouched.length === 3 && !untouched.some((t) => t.leads === 999),
+    `${untouched.length} row(s)`
   );
 
   // Ops now holds APPROVE: on the 13-step flow Ops reviews the ads and
@@ -474,6 +617,65 @@ async function main() {
     check(`Round ${round} is resubmitted and back under review`, again.status === 200 && again.body.status === 'UNDER_REVIEW');
   }
 
+  // ── The reviewer prunes the keyword list ──
+  // Striking one keyword is the whole point of the review; before this the
+  // only way to object to one was to reject the lot and describe it in prose.
+  {
+    await prisma.crmAdRequest.update({
+      where: { id: requestId },
+      data: { keywords: 'mba admission\nbest mba college\nfree mba\nmba jobs' },
+    });
+
+    const pruned = await opsSession.json<{ keywords: string[]; removed: number }>(
+      `/api/ad-requests/${requestId}/keywords`,
+      { method: 'PUT', body: JSON.stringify({ keywords: ['mba admission', 'best mba college'] }) }
+    );
+    check(
+      'The reviewer can remove keywords while the request is under review',
+      pruned.status === 200 && pruned.body.keywords.length === 2 && pruned.body.removed === 2,
+      `${pruned.body?.keywords?.length} left, ${pruned.body?.removed} removed`
+    );
+    const stored = await prisma.crmAdRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: { keywords: true },
+    });
+    check(
+      'And the pruned list is what the request now carries',
+      (stored.keywords ?? '').split('\n').filter(Boolean).join(',') ===
+        'mba admission,best mba college',
+      JSON.stringify(stored.keywords)
+    );
+
+    const dupes = await opsSession.json<{ keywords: string[] }>(
+      `/api/ad-requests/${requestId}/keywords`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ keywords: ['MBA Admission', 'mba admission', 'bba pune'] }),
+      }
+    );
+    check(
+      'The same keyword twice is merged, not stored twice',
+      dupes.body.keywords?.length === 2,
+      JSON.stringify(dupes.body?.keywords)
+    );
+
+    const byAds = await adsSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/keywords`,
+      { method: 'PUT', body: JSON.stringify({ keywords: ['anything'] }) }
+    );
+    check(
+      'The Ad Specialist cannot edit the list once it is under review',
+      byAds.status === 409,
+      byAds.body?.error ?? `got ${byAds.status}`
+    );
+
+    // Restore a realistic list for the mails that follow.
+    await opsSession.json(`/api/ad-requests/${requestId}/keywords`, {
+      method: 'PUT',
+      body: JSON.stringify({ keywords: ['mba admission', 'best mba college'] }),
+    });
+  }
+
   console.log('\n── Workflow: review to live ──');
 
   const reviewApproved = await opsSession.json<{ status: string }>(
@@ -523,15 +725,40 @@ async function main() {
     specialistQueue.status === 200 && specialistQueue.body.rows.some((r) => r.id === requestId)
   );
 
+  // The Keyword Research export, as the browser parses it before upload.
+  // One generation call covers the whole pipeline: the research reaches the
+  // prompt, the copy and sitelinks come back, and the version carries both.
+  const RESEARCHED = [
+    { keyword: 'mba admission', volume: 2900 },
+    { keyword: 'mba eligibility', volume: 2400 },
+    { keyword: 'mba entrance', volume: 720 },
+    { keyword: 'online mba admission', volume: 590 },
+  ];
+
   const copy = await adsSession.json<{
     headlines: Array<{ text: string; characters: number }>;
     descriptions: Array<{ text: string; characters: number }>;
+    sitelinks: Array<{ text: string; description1: string; description2: string }>;
     backend: string;
-    validation: { flags: Array<{ level: string }> };
-    savedVersion: { version: number } | null;
+    validation: {
+      flags: Array<{ level: string }>;
+      sitelinkCount: number;
+      subjectInHeadlines: number;
+      subjectInDescriptions: number;
+      excludedTermHits: number;
+    };
+    savedVersion: { id: string; version: number } | null;
   }>('/api/ai/ad-copy', {
     method: 'POST',
-    body: JSON.stringify({ requestId, tone: 'professional', save: true }),
+    body: JSON.stringify({
+      requestId,
+      save: true,
+      keywordVolumes: RESEARCHED,
+      // The default ban. The landing page used here talks about fees
+      // throughout, so this is a real test of the filter rather than a
+      // rule that never has to fire.
+      excludedTerms: ['fee'],
+    }),
   });
   check(
     'Ads team generates ad copy',
@@ -552,6 +779,276 @@ async function main() {
   );
   check('The version was saved to the request', copy.body.savedVersion?.version === 1);
 
+  check(
+    'Exactly 15 headlines and 4 descriptions come back, topped up if the model ran short',
+    (copy.body.headlines ?? []).length === 15 && (copy.body.descriptions ?? []).length === 4,
+    `${copy.body?.headlines?.length} / ${copy.body?.descriptions?.length}`
+  );
+  check(
+    'No two headlines are the same after the top-up',
+    new Set((copy.body.headlines ?? []).map((h) => h.text.toLowerCase())).size ===
+      (copy.body.headlines ?? []).length
+  );
+  check(
+    'No headline is a mid-word fragment of the product name',
+    (copy.body.headlines ?? []).every((h) => !/\bFull-ti\b|\bAdmissio\b/.test(h.text)),
+    (copy.body.headlines ?? []).map((h) => h.text).join(' | ').slice(0, 120)
+  );
+
+  // ── The ad has to say which college it is for ──
+  const namesCollege = (text: string) => /christ|university|mba|pgdm/i.test(text);
+  const headlinesNaming = (copy.body.headlines ?? []).filter((h) => namesCollege(h.text)).length;
+  const descriptionsNaming = (copy.body.descriptions ?? []).filter((d) =>
+    namesCollege(d.text)
+  ).length;
+  check(
+    'At least four headlines name the college, university or course',
+    headlinesNaming >= 4,
+    `${headlinesNaming} of ${copy.body?.headlines?.length}`
+  );
+  check(
+    'At least one description names it too',
+    descriptionsNaming >= 1,
+    `${descriptionsNaming} of ${copy.body?.descriptions?.length}`
+  );
+  check(
+    'The validator does not overstate how many headlines carry the name',
+    // `namesCollege` here is deliberately narrower than the validator, which
+    // also counts tokens from the campaign title such as the intake year.
+    // So the validator may legitimately count more — it must never count
+    // fewer than the ones we can see with the naked eye.
+    (copy.body.validation?.subjectInHeadlines ?? 0) >= headlinesNaming,
+    `validator ${copy.body.validation?.subjectInHeadlines}, visibly naming ${headlinesNaming}`
+  );
+  check(
+    'The client name reaches the copy, not just the course',
+    (copy.body.headlines ?? []).some((h) => /christ/i.test(h.text)),
+    (copy.body.headlines ?? [])
+      .filter((h) => /christ/i.test(h.text))
+      .map((h) => h.text)
+      .join(' | ') || 'no headline named the college'
+  );
+  check(
+    'And no headline carries the internal campaign wording from the title',
+    // Only the internal part. The intake year in "Christ University MBA
+    // 2026" comes from the brief and belongs in an admissions headline.
+    (copy.body.headlines ?? []).every((h) => !/e2e/i.test(h.text)),
+    (copy.body.headlines ?? []).map((h) => h.text).join(' | ').slice(0, 100)
+  );
+
+  // ── Sitelinks ──
+  const sitelinks = copy.body.sitelinks ?? [];
+  check(
+    'Six sitelinks come back with the copy',
+    sitelinks.length === 6,
+    `${sitelinks.length} sitelink(s)`
+  );
+  check(
+    'Every sitelink link text is within 25 characters',
+    sitelinks.every((sl) => sl.text.trim().length > 0 && sl.text.length <= 25),
+    sitelinks.map((sl) => `${sl.text}=${sl.text.length}`).join(', ')
+  );
+  check(
+    'Both sitelink description lines are within 35 characters',
+    sitelinks.every((sl) => sl.description1.length <= 35 && sl.description2.length <= 35),
+    `longest: ${Math.max(0, ...sitelinks.flatMap((sl) => [sl.description1.length, sl.description2.length]))}`
+  );
+  check(
+    'No sitelink carries one description line without the other',
+    sitelinks.every(
+      (sl) => Boolean(sl.description1.trim()) === Boolean(sl.description2.trim())
+    )
+  );
+  check(
+    'No two sitelinks share the same link text',
+    new Set(sitelinks.map((sl) => sl.text.toLowerCase())).size === sitelinks.length
+  );
+
+  // ── Nothing fee-related survives, anywhere ──
+  const FEE = /\bfees?\b/i;
+  const everyAsset = [
+    ...(copy.body.headlines ?? []).map((h) => h.text),
+    ...(copy.body.descriptions ?? []).map((d) => d.text),
+    ...sitelinks.flatMap((sl) => [sl.text, sl.description1, sl.description2]),
+  ].filter(Boolean);
+  const feeLeaks = everyAsset.filter((t) => FEE.test(t));
+  check(
+    'No headline, description or sitelink mentions a fee',
+    feeLeaks.length === 0,
+    feeLeaks.join(' | ') || `${everyAsset.length} asset(s) checked, all clean`
+  );
+  check(
+    'The validator agrees nothing slipped through',
+    copy.body.validation?.excludedTermHits === 0,
+    `${copy.body.validation?.excludedTermHits} hit(s)`
+  );
+
+  // ── The saved version keeps the research it was written from ──
+  const versionId = copy.body.savedVersion?.id ?? '';
+  const savedRow = versionId
+    ? await prisma.crmAdCopyVersion.findUnique({
+        where: { id: versionId },
+        select: { sitelinks: true, keywords: true },
+      })
+    : null;
+  check(
+    'The saved version stores its sitelinks',
+    Array.isArray(savedRow?.sitelinks) && (savedRow!.sitelinks as unknown[]).length === 6,
+    `${(savedRow?.sitelinks as unknown[] | null)?.length ?? 0} stored`
+  );
+  check(
+    'And the uploaded keywords, so the copy can be explained later',
+    Array.isArray(savedRow?.keywords) && (savedRow!.keywords as unknown[]).length === RESEARCHED.length,
+    `${(savedRow?.keywords as unknown[] | null)?.length ?? 0} stored`
+  );
+
+  const savedTerms = versionId
+    ? (
+        await prisma.crmAdCopyVersion.findUnique({
+          where: { id: versionId },
+          select: { excludedTerms: true },
+        })
+      )?.excludedTerms
+    : null;
+  check(
+    'The version records what it was forbidden to say',
+    Array.isArray(savedTerms) && (savedTerms as string[]).includes('fee'),
+    JSON.stringify(savedTerms)
+  );
+
+  // Editing a banned word back in has to be refused, or the ban only holds
+  // until the first correction.
+  const reintroduced = await adsSession.json<{
+    validation: { excludedTermHits: number; flags: Array<{ level: string; message: string }> };
+  }>(`/api/ad-copy-versions/${versionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      headlines: [{ text: 'Low Fees This Year' }, { text: 'Apply Online' }, { text: 'Enquire Now' }],
+    }),
+  });
+  check(
+    'Typing a banned word back into a headline is flagged as an error',
+    reintroduced.body.validation?.excludedTermHits === 1 &&
+      reintroduced.body.validation.flags.some(
+        (f) => f.level === 'error' && /excludes/.test(f.message)
+      ),
+    reintroduced.body.validation?.flags
+      ?.filter((f) => /excludes/.test(f.message))
+      .map((f) => f.message)
+      .join(' | ') || 'not flagged'
+  );
+
+  // Put the real copy back before the rest of the run reads it.
+  await adsSession.json(`/api/ad-copy-versions/${versionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ headlines: (copy.body.headlines ?? []).map((h) => ({ text: h.text })) }),
+  });
+
+  // ── Marking final submits the copy AND the keywords ──
+  const beforeFinal = await prisma.crmAdRequest.findUniqueOrThrow({
+    where: { id: requestId },
+    select: { keywords: true },
+  });
+  const markedFinal = await adsSession.json<{ validation: { sitelinkCount: number } }>(
+    `/api/ad-copy-versions/${versionId}`,
+    { method: 'PATCH', body: JSON.stringify({ isFinal: true }) }
+  );
+  check('The Ads team marks the version final', markedFinal.status === 200, `got ${markedFinal.status}`);
+
+  const afterFinal = await prisma.crmAdRequest.findUniqueOrThrow({
+    where: { id: requestId },
+    select: { keywords: true },
+  });
+  const landed = (afterFinal.keywords ?? '').split('\n').filter(Boolean);
+  check(
+    "Marking it final writes the researched keywords onto the request",
+    RESEARCHED.every((k) => landed.includes(k.keyword)),
+    `was ${JSON.stringify(beforeFinal.keywords)}, now ${landed.length} keyword(s)`
+  );
+  check(
+    'And the volumes are left out of the text the brief mail renders',
+    !(afterFinal.keywords ?? '').includes('2900'),
+    afterFinal.keywords?.slice(0, 60) ?? ''
+  );
+
+  // ── An over-length sitelink is caught on edit, not at upload to Google ──
+  const badSitelink = await adsSession.json<{
+    validation: { flags: Array<{ level: string; field: string; message: string }> };
+  }>(`/api/ad-copy-versions/${versionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      sitelinks: [
+        {
+          text: 'A sitelink label far past twenty five characters',
+          description1: 'Short enough',
+          description2: '',
+        },
+      ],
+    }),
+  });
+  const sitelinkErrors = (badSitelink.body.validation?.flags ?? []).filter(
+    (f) => f.field === 'sitelink' && f.level === 'error'
+  );
+  check(
+    'An edited sitelink over 25 characters is flagged as an error',
+    sitelinkErrors.some((f) => /exceeds 25/.test(f.message)),
+    sitelinkErrors.map((f) => f.message).join(' | ') || 'no sitelink errors'
+  );
+  check(
+    'A sitelink with one description line is flagged too',
+    sitelinkErrors.some((f) => /both description lines/.test(f.message))
+  );
+
+  // Put the real sitelinks back so the rest of the run sees a sane version.
+  await adsSession.json(`/api/ad-copy-versions/${versionId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ sitelinks }),
+  });
+
+  // ── The copy screen's brief fields override what Ops filed ──
+  // The Ads person can see that the course was typed one way and the
+  // landing page says another; before this they had to edit somebody
+  // else's requirement form to fix a headline.
+  const overridden = await adsSession.json<{
+    headlines: Array<{ text: string }>;
+    descriptions: Array<{ text: string }>;
+  }>('/api/ai/ad-copy', {
+    method: 'POST',
+    body: JSON.stringify({
+      requestId,
+      institution: 'Narsee Monjee',
+      product: 'Executive PGDM',
+      location: 'Mumbai',
+      excludedTerms: ['fee'],
+    }),
+  });
+  const overriddenText = [
+    ...(overridden.body.headlines ?? []).map((h) => h.text),
+    ...(overridden.body.descriptions ?? []).map((d) => d.text),
+  ].join(' | ');
+  check(
+    'An overridden institution reaches the copy',
+    overridden.status === 200 && /narsee|monjee/i.test(overriddenText),
+    overriddenText.slice(0, 110)
+  );
+  check(
+    'And the request it overrode is not named instead',
+    !/christ/i.test(overriddenText),
+    overriddenText.slice(0, 110)
+  );
+
+  const stored = await prisma.crmAdRequest.findUniqueOrThrow({
+    where: { id: requestId },
+    select: { title: true, productService: true, location: true },
+  });
+  check(
+    'Overriding changes the generation, never the request',
+    stored.title.includes('Christ University') &&
+      stored.productService === 'Two-year full-time MBA' &&
+      !stored.location.includes('Mumbai'),
+    `${stored.title} / ${stored.productService} / ${stored.location}`
+  );
+
   const score = await adsSession.json<{ score: number; grade: string; suggestions: string[] }>(
     '/api/ai/landing-score',
     { method: 'POST', body: JSON.stringify({ url: 'https://www.kollegeapply.com/', requestId }) }
@@ -561,6 +1058,123 @@ async function main() {
     score.status === 200 && typeof score.body.score === 'number',
     `${score.body?.score}/100 grade ${score.body?.grade}, ${score.body?.suggestions?.length} suggestion(s)`
   );
+
+  // ── The score is taken automatically, before anyone asks ──
+  // Scoring is deterministic and costs one page fetch, so the mail carries
+  // a number rather than an empty panel. The guard is what keeps it to one
+  // fetch per request however many mails that request sends.
+  {
+    const { ensureLandingScore } = await import('@/lib/ai/landing-score-store');
+    const probe = await prisma.crmAdRequest.create({
+      data: {
+        reference: `AR-AUTOSCORE-${Date.now() % 100000}`,
+        title: 'Auto score probe', objective: 'LEAD_GENERATION', productService: 'MBA',
+        targetAudience: '', location: 'Delhi', startDate: new Date('2026-10-01'),
+        // A URL nothing has scored yet, so the guard below is testing the
+        // "already scored" case rather than tripping over an earlier run.
+        landingPageUrl: `https://www.kollegeapply.com/?e2e=${Date.now()}`,
+        adUrlClientlpDesktop: 'https://www.kollegeapply.com/',
+        status: 'DRAFT', createdById: ops.id,
+      },
+      select: { id: true },
+    });
+    await ensureLandingScore(probe.id);
+    const first = await prisma.crmLandingScore.count({ where: { requestId: probe.id } });
+    check('A mail scores the landing page when nobody has', first === 1, `${first} score(s)`);
+
+    // Called again — as the next four mails about this request would.
+    await ensureLandingScore(probe.id);
+    const second = await prisma.crmLandingScore.count({ where: { requestId: probe.id } });
+    check(
+      'And never scores the same request twice',
+      second === 1,
+      `${second} score(s) after a second mail`
+    );
+    await prisma.crmAdRequest.delete({ where: { id: probe.id } });
+  }
+
+  // ── And the score reaches the mail ──
+  const scoredBrief = await buildRequestBrief(requestId, { onlyOpsFields: true });
+  check(
+    'The landing page score reaches the brief mail',
+    scoredBrief?.landingScore?.score === score.body.score &&
+      scoredBrief?.landingScore?.grade === score.body.grade,
+    scoredBrief?.landingScore
+      ? `${scoredBrief.landingScore.score}/100 (${scoredBrief.landingScore.passed} of ${scoredBrief.landingScore.maxPoints} weighted), grade ${scoredBrief.landingScore.grade}`
+      : 'no score on the brief'
+  );
+  check(
+    'It is attached to the request, not matched loosely by URL',
+    scoredBrief?.landingScore?.matchedByUrl === false,
+    `matchedByUrl=${scoredBrief?.landingScore?.matchedByUrl}`
+  );
+  check(
+    'The score is reported out of 100, not against the raw weight total',
+    // `score` is already a percentage. Pairing it with maxPoints read as a
+    // score that had lost 43 points it never had.
+    scoredBrief?.landingScore?.score === score.body.score &&
+      (scoredBrief?.landingScore?.passed ?? 0) <= (scoredBrief?.landingScore?.maxPoints ?? 0),
+    `${scoredBrief?.landingScore?.score}/100 from ${scoredBrief?.landingScore?.passed}/${scoredBrief?.landingScore?.maxPoints}`
+  );
+
+  const scoreSection = scoredBrief?.sections.find((s) => /landing page score/i.test(s.heading));
+  check(
+    'And it renders as its own section with the score and the grade',
+    Boolean(scoreSection) &&
+      scoreSection!.rows.some((r) => r.label === 'Score' && r.value.endsWith('/ 100')) &&
+      scoreSection!.rows.some((r) => r.label === 'Grade' && r.value === score.body.grade),
+    scoreSection ? scoreSection.rows.map((r) => `${r.label}=${r.value}`).join(' | ').slice(0, 120) : 'no section'
+  );
+
+  // A run started from the Landing Page Scorer menu saves with no request
+  // id, so the brief has to find it by URL or the score somebody just took
+  // would be missing from the very next mail.
+  const standalone = await adsSession.json<{ score: number; grade: string }>(
+    '/api/ai/landing-score',
+    { method: 'POST', body: JSON.stringify({ url: 'https://www.kollegeapply.com/' }) }
+  );
+  const orphan = await prisma.crmLandingScore.findFirst({
+    where: { requestId: null, url: 'https://www.kollegeapply.com/' },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  check(
+    'A score taken from the menu is saved without a request',
+    standalone.status === 200 && Boolean(orphan),
+    orphan ? 'stored unattached' : 'not stored'
+  );
+
+  // The request screen has to find it too. It used to look only at scores
+  // attached to the request, so a page scored from the menu showed "No
+  // score yet" on the request while the brief mail displayed it fine.
+  {
+    const bare = await prisma.crmAdRequest.create({
+      data: {
+        reference: `AR-LPMATCH-${Date.now() % 100000}`,
+        title: 'URL match probe', objective: 'LEAD_GENERATION', productService: 'MBA',
+        targetAudience: '', location: 'Delhi', startDate: new Date('2026-10-01'),
+        landingPageUrl: 'https://www.kollegeapply.com/',
+        adUrlClientlpDesktop: 'https://www.kollegeapply.com/',
+        status: 'DRAFT', createdById: ops.id,
+      },
+      select: { id: true },
+    });
+    const own = await prisma.crmLandingScore.count({ where: { requestId: bare.id } });
+    const seen = await adsSession.json<{
+      request: { landingScores: Array<{ score: number; matchedByUrl?: boolean }> };
+    }>(`/api/ad-requests/${bare.id}`);
+    check(
+      'A request with no score of its own still shows the one taken for its URL',
+      own === 0 && (seen.body.request?.landingScores?.length ?? 0) > 0,
+      `${own} own, ${seen.body.request?.landingScores?.length ?? 0} shown`
+    );
+    check(
+      'And it is flagged as matched by URL, not passed off as its own',
+      seen.body.request?.landingScores?.[0]?.matchedByUrl === true,
+      `matchedByUrl=${seen.body.request?.landingScores?.[0]?.matchedByUrl}`
+    );
+    await prisma.crmAdRequest.delete({ where: { id: bare.id } });
+  }
 
   const noCampaign = await adsSession.json<{ error: string }>(
     `/api/ad-requests/${requestId}/transition`,
@@ -601,7 +1215,14 @@ async function main() {
     `${detail.body.request.events.length} events`
   );
   check('The copy version is attached', detail.body.request.adCopyVersions.length === 1);
-  check('The landing score is attached', detail.body.request.landingScores.length === 1);
+  check(
+    'The landing score is attached',
+    // At least one, not exactly one: the first workflow mail scores the
+    // page automatically and the Ads team can score it again afterwards.
+    // History is the point — it shows whether a fix moved the number.
+    detail.body.request.landingScores.length >= 1,
+    `${detail.body.request.landingScores.length} score(s) on the request`
+  );
 
   console.log('\n── Changing the Google Ads account out of band ──');
 
@@ -1152,6 +1773,209 @@ async function main() {
   const bogus = await adminMail.json<{ error: string }>('/api/admin/email/preview?event=NOT_A_THING');
   check('An unknown event is rejected', Boolean(bogus.body?.error), bogus.body?.error);
 
+  console.log('\n── Keyword research ──');
+
+  {
+    const seedBody = (over: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        keywords: ['mba admission'],
+        geoTargetIds: ['2356'],
+        languageId: '1000',
+        ...over,
+      });
+
+    const anonIdeas = await new Session().json('/api/keyword-ideas', {
+      method: 'POST',
+      body: seedBody(),
+    });
+    check('An unauthenticated search is 401', anonIdeas.status === 401, `got ${anonIdeas.status}`);
+
+    // A role holding everything *except* the planner. Proves the module's own
+    // toggle is what opens the endpoint, not merely being signed in with the
+    // neighbouring keyword permissions.
+    const blockedRole = await prisma.crmRole.upsert({
+      where: { slug: 'e2e-planner-blocked' },
+      create: {
+        slug: 'e2e-planner-blocked',
+        name: 'E2E Planner Blocked',
+        description: 'Disposable fixture for the e2e suite.',
+        isSystem: false,
+        isSuperAdmin: false,
+        allAccounts: true,
+      },
+      update: {},
+    });
+    await prisma.crmRolePermission.deleteMany({ where: { roleId: blockedRole.id } });
+    await prisma.crmRolePermission.createMany({
+      data: ALL_FEATURES.map((feature) => ({
+        roleId: blockedRole.id,
+        feature: feature,
+        allowed: !feature.startsWith('KEYWORD_PLANNER:'),
+      })),
+    });
+    await prisma.crmUser.upsert({
+      where: { email: 'e2e.planner-blocked@example.com' },
+      create: {
+        email: 'e2e.planner-blocked@example.com',
+        name: 'E2E Planner Blocked',
+        password: await bcrypt.hash(TEST_PASSWORD, 10),
+        roleId: blockedRole.id,
+        isActive: true,
+        mustChangePassword: false,
+        allAccounts: true,
+      },
+      update: { roleId: blockedRole.id, isActive: true, mustChangePassword: false },
+    });
+
+    const blocked = new Session();
+    await blocked.login('e2e.planner-blocked@example.com', TEST_PASSWORD);
+    const blockedSearch = await blocked.json('/api/keyword-ideas', {
+      method: 'POST',
+      body: seedBody(),
+    });
+    check(
+      'KEYWORDS:VIEW alone does not open the planner',
+      blockedSearch.status === 403,
+      `got ${blockedSearch.status}`
+    );
+    const blockedOptions = await blocked.json('/api/keyword-ideas/locations');
+    check(
+      'Nor the location list',
+      blockedOptions.status === 403,
+      `got ${blockedOptions.status}`
+    );
+
+    // ── Input validation ──
+    const noSeeds = await opsSession.json('/api/keyword-ideas', {
+      method: 'POST',
+      body: JSON.stringify({ geoTargetIds: ['2356'], languageId: '1000' }),
+    });
+    check('A search with no seed and no URL is refused', noSeeds.status === 400, `got ${noSeeds.status}`);
+
+    const noGeo = await opsSession.json('/api/keyword-ideas', {
+      method: 'POST',
+      body: seedBody({ geoTargetIds: [] }),
+    });
+    check('A search with no location is refused', noGeo.status === 400, `got ${noGeo.status}`);
+
+    const junkGeo = await opsSession.json('/api/keyword-ideas', {
+      method: 'POST',
+      body: seedBody({ geoTargetIds: ['geoTargetConstants/2356'] }),
+    });
+    check(
+      'A geo target that is not a bare id is refused',
+      junkGeo.status === 400,
+      `got ${junkGeo.status}`
+    );
+
+    const junkUrl = await opsSession.json('/api/keyword-ideas', {
+      method: 'POST',
+      body: JSON.stringify({
+        pageUrl: 'javascript:alert(1)',
+        geoTargetIds: ['2356'],
+        languageId: '1000',
+      }),
+    });
+    check('A non-http page URL is refused', junkUrl.status === 400, `got ${junkUrl.status}`);
+
+    const tooMany = await opsSession.json('/api/keyword-ideas', {
+      method: 'POST',
+      body: seedBody({ keywords: Array.from({ length: 21 }, (_, i) => `seed ${i}`) }),
+    });
+    check(
+      'More than twenty seeds is refused rather than silently truncated at the API',
+      tooMany.status === 400,
+      `got ${tooMany.status}`
+    );
+
+    if (!process.env.GOOGLE_ADS_DEVELOPER_TOKEN) {
+      console.log('  SKIP  Google Ads is not configured; the live planner call was not exercised.');
+    } else {
+      const locations = await opsSession.json<{
+        locations: Array<{ id: string; name: string; type: string }>;
+        languages: Array<{ id: string; name: string }>;
+        degraded: boolean;
+      }>('/api/keyword-ideas/locations');
+      check(
+        'The location list loads',
+        locations.status === 200 && (locations.body.locations ?? []).length > 0,
+        `${locations.body?.locations?.length ?? 0} location(s), degraded=${locations.body?.degraded}`
+      );
+      check(
+        'India is in it, and it is first',
+        locations.body?.locations?.[0]?.id === '2356',
+        locations.body?.locations?.[0]?.name
+      );
+
+      const before = await prisma.crmAuditLog.count({ where: { action: 'KEYWORDS_RESEARCHED' } });
+
+      // Operations holds the planner but not FINANCIALS:VIEW, so this is both
+      // the happy path and the redaction case in one call.
+      const opsIdeas = await opsSession.json<{
+        ideas: Array<{
+          keyword: string;
+          avgMonthlySearches: number;
+          lowTopOfPageBid: number | null;
+          highTopOfPageBid: number | null;
+          monthly: Array<{ label: string; searches: number }>;
+          competition: string;
+        }>;
+        canSeeMoney: boolean;
+        total: number;
+      }>('/api/keyword-ideas', { method: 'POST', body: seedBody() });
+
+      check(
+        'A real search returns ideas',
+        opsIdeas.status === 200 && (opsIdeas.body.ideas ?? []).length > 0,
+        `${opsIdeas.body?.ideas?.length ?? 0} idea(s)`
+      );
+
+      const rows = opsIdeas.body?.ideas ?? [];
+      if (rows.length > 0) {
+        check(
+          'Every volume is a real number, not a string or a NaN',
+          rows.every((r) => typeof r.avgMonthlySearches === 'number' && !Number.isNaN(r.avgMonthlySearches)),
+          `top: ${rows[0]!.keyword} = ${rows[0]!.avgMonthlySearches}`
+        );
+        check(
+          'They arrive sorted by volume',
+          rows.every((r, i) => i === 0 || rows[i - 1]!.avgMonthlySearches >= r.avgMonthlySearches),
+          `${rows[0]!.avgMonthlySearches} … ${rows[rows.length - 1]!.avgMonthlySearches}`
+        );
+        check(
+          'The twelve-month series comes back',
+          rows.some((r) => (r.monthly ?? []).length >= 12),
+          `longest series: ${Math.max(...rows.map((r) => (r.monthly ?? []).length))}`
+        );
+        check(
+          'Operations is told it cannot see money',
+          opsIdeas.body.canSeeMoney === false,
+          `canSeeMoney=${opsIdeas.body.canSeeMoney}`
+        );
+        check(
+          'And no bid estimate reaches the wire',
+          rows.every((r) => r.lowTopOfPageBid === null && r.highTopOfPageBid === null),
+          `${rows.filter((r) => r.highTopOfPageBid !== null).length} row(s) leaked a bid`
+        );
+      }
+
+      const managerIdeas = await managerSession.json<{
+        ideas: Array<{ lowTopOfPageBid: number | null; highTopOfPageBid: number | null }>;
+        canSeeMoney: boolean;
+      }>('/api/keyword-ideas', { method: 'POST', body: seedBody() });
+      check(
+        'A Manager, who holds FINANCIALS:VIEW, does get the bids',
+        managerIdeas.status === 200 &&
+          managerIdeas.body.canSeeMoney === true &&
+          (managerIdeas.body.ideas ?? []).some((r) => r.highTopOfPageBid !== null),
+        `canSeeMoney=${managerIdeas.body?.canSeeMoney}`
+      );
+
+      const after = await prisma.crmAuditLog.count({ where: { action: 'KEYWORDS_RESEARCHED' } });
+      check('Every search is audited', after > before, `${after - before} new row(s)`);
+    }
+  }
+
   console.log('\n── The assistant ──');
 
   const opsAsk = await opsSession.json('/api/assistant', {
@@ -1394,11 +2218,28 @@ async function main() {
   if (failed > 0) process.exitCode = 1;
 }
 
+// Ctrl-C in the middle of a run would otherwise leave the sink in place,
+// which silently stops the real mail going out — a worse fault than the one
+// muting fixes, and an invisible one.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void restoreEmail()
+      .catch(() => {
+        console.error(`\nCould not restore the mail recipient. Clear "Test mode recipient" on the Email settings page — it is set to ${MAIL_SINK}.`);
+      })
+      .finally(async () => {
+        await prisma.$disconnect();
+        process.exit(130);
+      });
+  });
+}
+
 main()
   .catch((e) => {
     console.error(e);
     process.exitCode = 1;
   })
   .finally(async () => {
+    await restoreEmail();
     await prisma.$disconnect();
   });

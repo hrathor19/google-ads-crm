@@ -13,6 +13,7 @@ import { assertVisible, availableTransitions } from '@/lib/workflow/ad-requests'
 import { Prisma } from '@prisma/client';
 import { adRequestPatchSchema, primaryLandingUrl } from '@/lib/workflow/schemas';
 import { canSeeFinancials } from '@/lib/redact';
+import { urlVariants } from '@/lib/ai/landing-score-store';
 
 export const dynamic = 'force-dynamic';
 
@@ -123,6 +124,9 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
             tone: true,
             headlines: true,
             descriptions: true,
+            sitelinks: true,
+            keywords: true,
+            excludedTerms: true,
             validation: true,
             backend: true,
             isFinal: true,
@@ -161,9 +165,45 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     const canSeeMoney = await canSeeFinancials(principal);
     const transitions = await availableTransitions(principal, request);
 
+    // A score taken from the Landing Page Scorer menu saves with no request
+    // id, so a request whose page has been scored still showed "No score
+    // yet" here while the brief mail displayed the score perfectly well.
+    // Matched on the URL, exactly as the mail does, and flagged so the
+    // screen can say where it came from rather than implying someone ran it
+    // for this request.
+    const landingScores =
+      request.landingScores.length > 0
+        ? request.landingScores.map((s) => ({ ...s, matchedByUrl: false }))
+        : request.landingPageUrl
+          ? (
+              await prisma.crmLandingScore.findMany({
+                where: { url: { in: urlVariants(request.landingPageUrl), mode: 'insensitive' } },
+                orderBy: { createdAt: 'desc' },
+                take: 10,
+                select: {
+                  id: true,
+                  url: true,
+                  score: true,
+                  grade: true,
+                  pageType: true,
+                  passed: true,
+                  maxPoints: true,
+                  checks: true,
+                  categories: true,
+                  suggestions: true,
+                  tracking: true,
+                  links: true,
+                  createdAt: true,
+                  createdBy: { select: { name: true, email: true } },
+                },
+              })
+            ).map((s) => ({ ...s, matchedByUrl: true }))
+          : [];
+
     return {
       request: {
         ...request,
+        landingScores,
         budget: canSeeMoney && request.budget != null ? Number(request.budget) : null,
         requiredCpl:
           canSeeMoney && request.requiredCpl != null ? Number(request.requiredCpl) : null,
@@ -249,9 +289,26 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const derived = primaryLandingUrl({ ...existing, ...body });
     if (derived) patch.landingPageUrl = derived;
 
-    const updated = await prisma.crmAdRequest.update({
-      where: { id: params.id },
-      data: patch,
+    // Monthly lead targets are a relation, so they are not in the scalar
+    // loop above — and nothing else was writing them, which meant every
+    // edit silently discarded the month-by-month plan Ops had typed. They
+    // were then missing from the brief mail, with no error anywhere to say
+    // why. Replaced wholesale rather than merged: the form submits the
+    // complete table, so a month the user deleted has to disappear.
+    const updated = await prisma.$transaction(async (tx) => {
+      if (body.leadTargets !== undefined) {
+        await tx.crmAdRequestLeadTarget.deleteMany({ where: { requestId: params.id } });
+        if (body.leadTargets.length > 0) {
+          await tx.crmAdRequestLeadTarget.createMany({
+            data: body.leadTargets.map((t) => ({
+              requestId: params.id,
+              month: new Date(`${t.month}-01T00:00:00.000Z`),
+              leads: t.leads,
+            })),
+          });
+        }
+      }
+      return tx.crmAdRequest.update({ where: { id: params.id }, data: patch });
     });
 
     await logAudit({

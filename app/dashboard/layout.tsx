@@ -37,6 +37,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const features = await grantedFeatures({
     userId: user.id,
     email: user.email,
+    name: user.name,
     roleId: user.roleId,
     roleSlug: user.role.slug,
     roleName: user.role.name,

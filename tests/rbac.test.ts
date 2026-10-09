@@ -7,7 +7,7 @@ import {
   feature,
   isValidFeature,
 } from '@/lib/rbac/features';
-import { accountScopeWhere, canAccessAccount, type Principal } from '@/lib/rbac/permissions';
+import { accountScopeWhere, canAccessAccount, type Principal, actorLabel } from '@/lib/rbac/permissions';
 
 /**
  * The permission catalogue and the account-scope helpers.
@@ -20,6 +20,7 @@ import { accountScopeWhere, canAccessAccount, type Principal } from '@/lib/rbac/
 const principal = (over: Partial<Principal> = {}): Principal => ({
   userId: 'u1',
   email: 'u@example.com',
+  name: 'Test User',
   roleId: 'r1',
   roleSlug: 'operations',
   roleName: 'Operations',
@@ -185,5 +186,27 @@ describe('account scoping', () => {
   it('targets the column the caller names', () => {
     const p = principal({ allowedAccountIds: [7] });
     expect(accountScopeWhere(p, 'account_id')).toEqual({ account_id: { in: [7] } });
+  });
+});
+
+describe('actorLabel', () => {
+  it('prefers the person over the address', () => {
+    expect(actorLabel({ name: 'Lakshmi Rajesh Pillai', email: 'lakshmi.pillai@kollegeapply.com' }))
+      .toBe('Lakshmi Rajesh Pillai');
+  });
+
+  it('falls back to the address when there is no name on record', () => {
+    expect(actorLabel({ name: null, email: 'a@b.com' })).toBe('a@b.com');
+  });
+
+  it('treats a blank name as no name, rather than printing nothing', () => {
+    // A user row with "   " for a name would otherwise produce
+    // "   took this campaign live."
+    expect(actorLabel({ name: '   ', email: 'a@b.com' })).toBe('a@b.com');
+    expect(actorLabel({ name: '', email: 'a@b.com' })).toBe('a@b.com');
+  });
+
+  it('trims a name that was saved with whitespace around it', () => {
+    expect(actorLabel({ name: '  Govind Mahara  ', email: 'g@b.com' })).toBe('Govind Mahara');
   });
 });

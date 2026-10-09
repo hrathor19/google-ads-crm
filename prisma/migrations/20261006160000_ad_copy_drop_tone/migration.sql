@@ -1,0 +1,12 @@
+-- The tone picker is gone, so a version no longer has one.
+--
+-- Asking the Ads person to choose a single voice for all fifteen headlines
+-- worked against the format: Google rotates RSA assets and rewards a set
+-- that covers different reasons to click, so one tone applied uniformly
+-- scored worse than a mixed set and lost whoever that tone did not suit.
+-- The generator now spreads the headlines across angles itself.
+--
+-- The column stays, nullable, rather than being dropped: the versions
+-- already saved record which tone produced them, and that is the only place
+-- that history exists.
+ALTER TABLE "crm_ad_copy_versions" ALTER COLUMN "tone" DROP NOT NULL;

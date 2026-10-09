@@ -118,11 +118,6 @@ export const env = {
   }),
 
   /**
-   * Transactional email. The Brevo key and sender come across from the Google
-   * Ads Intelligence project; everything else about how mail is addressed
-   * lives in the database so a Super Admin can change it without a deploy.
-   */
-  /**
    * Sign-in configuration.
    *
    * `allowedDomains` is the server-side gate on Google sign-in. The consent
@@ -139,8 +134,24 @@ export const env = {
       .filter(Boolean),
   }),
 
+  /**
+   * Transactional email.
+   *
+   * Infinito rather than Brevo: a Brevo key is restricted to an allowlist of
+   * IP addresses, so every machine that ran this app — including a laptop on
+   * a changing home connection — had to be registered before one mail would
+   * leave it. Infinito authenticates on a client id and password and does
+   * not care where the request came from.
+   *
+   * Only the credentials and the fallback sender live here. Everything about
+   * how mail is addressed is in the database, so a Super Admin can change it
+   * without a deploy.
+   */
   email: () => ({
-    brevoApiKey: str('BREVO_API_KEY'),
+    infinitoClientId: str('INFINITO_CLIENT_ID'),
+    infinitoClientPassword: str('INFINITO_CLIENT_PASSWORD'),
+    /** Where Infinito posts delivery receipts. Optional; omitted when blank. */
+    infinitoDlrUrl: str('INFINITO_DLR_URL'),
     /** Seeds the From address the first time the settings row is created. */
     defaultFrom: str('EMAIL_FROM'),
     /**

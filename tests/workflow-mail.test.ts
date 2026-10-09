@@ -295,9 +295,13 @@ describe('keeping the brief to one screen', () => {
       },
       'x'
     );
-    // One row carrying both, rather than a row each.
+    // One row carrying both, rather than a row each. Counted from the
+    // section's own table, which is the row after the heading.
     const body = html.slice(html.indexOf('Targeting'));
-    expect((body.match(/<tr>/g) ?? []).length).toBe(1);
+    const firstTable = body.slice(body.indexOf('<table'), body.indexOf('</table>'));
+    expect((firstTable.match(/<tr>/g) ?? []).length).toBe(1);
+    expect(firstTable).toContain('Location');
+    expect(firstTable).toContain('Age restriction');
   });
 
   it('gives a long value the whole width', () => {
@@ -314,7 +318,10 @@ describe('keeping the brief to one screen', () => {
       },
       'x'
     );
-    expect(html).toContain('colspan="2"');
+    // The value spans the three columns the two narrow pairs would use, so
+    // a landing page URL is not squeezed into a quarter of the width.
+    expect(html).toContain('colspan="3"');
+    expect(html).toContain('https://lp.kollegeapply.com/MICA2027');
   });
 });
 
@@ -358,8 +365,172 @@ describe('the first mail shows only what Operations typed', () => {
       },
       'x'
     ).html;
+    // Each tile takes an equal share of the strip, so one figure fills the
+    // width rather than sitting in a third of it next to two empty cells.
     expect(one).toContain('width="100%"');
-    expect(one).not.toContain('border-spacing:8px 0;width:100%');
-    expect(three).toContain('border-spacing:8px 0;width:100%');
+    expect(three).toContain('width="33%"');
+    expect(three).not.toContain('width="100%" style="width:100%;border:1px solid');
+  });
+});
+
+describe('the month-by-month lead target', () => {
+  const tables = [
+    {
+      heading: 'Month-by-month lead target',
+      head: ['Month', 'Leads'],
+      body: [
+        ['Jan 2026', '100'],
+        ['Feb 2026', '120'],
+        ['Mar 2026', '150'],
+      ],
+      foot: ['Total', '370'],
+      numeric: true,
+    },
+  ];
+
+  it('renders as a real table, not a run-on line', () => {
+    const { html } = renderBody({ reference: 'AR-0007', title: 'MICA', tables }, 'x');
+    expect(html).toContain('Month-by-month lead target');
+    for (const month of ['Jan 2026', 'Feb 2026', 'Mar 2026']) expect(html).toContain(month);
+    // The thing that was missing: a header row and a total.
+    expect(html).toContain('Total');
+    expect(html).toContain('370');
+    // Not the old flattened form.
+    expect(html).not.toContain('Jan 2026: 100 ·');
+  });
+
+  it('right-aligns the figures and left-aligns the months', () => {
+    const { html } = renderBody({ reference: 'AR-0007', title: 'MICA', tables }, 'x');
+    expect(html).toContain('<td align="right"');
+    expect(html).toContain('<td align="left"');
+  });
+
+  it('keeps its shape in the plain-text part', () => {
+    const { text } = renderBody({ reference: 'AR-0007', title: 'MICA', tables }, 'x');
+    expect(text).toContain('MONTH-BY-MONTH LEAD TARGET');
+    // Column-aligned: every row's "Leads" column starts at the same offset.
+    const lines = text.split('\n').filter((l) => /Jan 2026|Feb 2026|Total/.test(l));
+    expect(lines).toHaveLength(3);
+    const offsets = lines.map((l) => l.indexOf(l.trim().split(/\s{2,}/)[1] ?? ''));
+    expect(new Set(offsets).size).toBe(1);
+  });
+
+  it('is left out entirely when no months were given', () => {
+    const { html } = renderBody({ reference: 'AR-0007', title: 'MICA', tables: [] }, 'x');
+    expect(html).not.toContain('Month-by-month');
+  });
+});
+
+describe('the campaign-plan layout', () => {
+  const base = {
+    reference: 'AR-0006',
+    title: 'CGC Jhanjheri',
+    status: 'Live',
+    subtitle: ['MBA, MCA', 'Delhi', 'Lead generation'],
+    meta: [
+      { icon: '&#128197;', label: 'Start date', value: '07 Oct 2026' },
+      { icon: '&#128205;', label: 'Location', value: 'Delhi' },
+    ],
+    ownership: [
+      { role: 'Raised by', name: 'Girish Singh' },
+      { role: 'Ad Specialist', name: 'Lakshmi Rajesh Pillai' },
+    ],
+  };
+
+  it('puts what, where and why under the title', () => {
+    const { html } = renderBody(base, 'x');
+    expect(html).toContain('MBA, MCA');
+    expect(html).toContain('Lead generation');
+    // Separated, not run together.
+    expect(html).toMatch(/MBA, MCA[\s\S]{0,40}Delhi/);
+  });
+
+  it('names who owns it rather than leaving it to the intro', () => {
+    const { html } = renderBody(base, 'x');
+    expect(html).toContain('Ownership');
+    expect(html).toContain('Girish Singh');
+    expect(html).toContain('Lakshmi Rajesh Pillai');
+  });
+
+  it('sizes the KPI tiles to how many there are', () => {
+    const five = renderBody(
+      {
+        ...base,
+        highlights: ['a', 'b', 'c', 'd', 'e'].map((l) => ({ label: l, value: '1', muted: false })),
+      },
+      'x'
+    ).html;
+    const three = renderBody(
+      {
+        ...base,
+        highlights: ['a', 'b', 'c'].map((l) => ({ label: l, value: '1', muted: false })),
+      },
+      'x'
+    ).html;
+    // Three tiles on the Ops mail must fill the row, not sit in a fifth of
+    // it beside two empty cells.
+    expect(five).toContain('width="20%"');
+    expect(three).toContain('width="33%"');
+  });
+
+  it('shows the copy and says whether it is signed off', () => {
+    const adCopy = {
+      version: 2,
+      isFinal: false,
+      headlines: ['CGC Jhanjheri MBA', 'Apply Now'],
+      descriptions: ['Study at CGC Jhanjheri.'],
+      sitelinks: [{ text: 'Eligibility', description1: 'Entry requirements', description2: 'Check first' }],
+      keywords: [{ keyword: 'cgc jhanjheri', volume: 12100 }],
+    };
+    const { html } = renderBody({ ...base, adCopy }, 'x');
+    expect(html).toContain('CGC Jhanjheri MBA');
+    expect(html).toContain('Eligibility');
+    expect(html).toContain('12,100');
+    // A draft must never read as approved copy.
+    expect(html).toContain('draft, not yet marked final');
+
+    const final = renderBody({ ...base, adCopy: { ...adCopy, isFinal: true } }, 'x').html;
+    expect(final).toContain('final');
+    expect(final).not.toContain('draft, not yet marked final');
+  });
+
+  it('leaves the copy cards out entirely when nothing has been written', () => {
+    const { html } = renderBody({ ...base, adCopy: null }, 'x');
+    expect(html).not.toContain('Sitelinks');
+    expect(html).not.toContain('Ad copy');
+  });
+
+  it('renders the monthly plan as figures only, with no share bars', () => {
+    const { html } = renderBody(
+      {
+        ...base,
+        tables: [
+          {
+            heading: 'Month-by-month lead target',
+            head: ['Month', 'Leads', 'Share'],
+            body: [['Oct 2026', '1,100', '11%'], ['Nov 2026', '4,300', '43%']],
+            foot: ['Total', '5,400', '100%'],
+            numeric: true,
+          },
+        ],
+      },
+      'x'
+    );
+    expect(html).toContain('11%');
+    expect(html).toContain('Total');
+    // The share used to be drawn twice: as a percentage and as a blue bar
+    // beside it. The bar was a sized table cell, so its width attribute is
+    // the thing to watch for — the percentages alone must carry the shape.
+    expect(html).not.toContain('width="43%"');
+    expect(html).not.toContain('#3b82f6');
+  });
+
+  it('still renders with none of the new blocks supplied', () => {
+    // Every one of these is optional; a mail built by an older caller must
+    // not throw or come out empty.
+    const { html, text } = renderBody({ reference: 'AR-0001', title: 'Plain' }, 'Something happened.');
+    expect(html).toContain('Plain');
+    expect(html).toContain('Something happened.');
+    expect(text).toContain('Plain');
   });
 });

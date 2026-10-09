@@ -1,6 +1,8 @@
 import 'server-only';
 import type { AdRequestStatus, CrmNotificationType } from '@prisma/client';
 import { env } from '@/lib/env';
+import { prisma } from '@/lib/prisma';
+import { ensureLandingScore } from '@/lib/ai/landing-score-store';
 import { buildRequestBrief } from './brief';
 import { sendEventEmail, type EventContext } from './send';
 
@@ -50,7 +52,7 @@ function reasonLabel(event: CrmNotificationType): string {
  * Send the mail for a transition that has already committed.
  *
  * Never throws and never blocks the caller's result: the status changed
- * whether or not Brevo was reachable, and a 500 here would tell the user
+ * whether or not the mail provider was reachable, and a 500 here would tell the user
  * their approval failed when it did not.
  */
 export async function mailForTransition(params: {
@@ -65,7 +67,31 @@ export async function mailForTransition(params: {
   const event = mailEventFor(params.target);
   if (!event) return { sent: false, detail: `No mail is configured for ${params.target}.` };
 
+  // Who did it, by name.
+  //
+  // `actorName` is optional and the workflow never passed it, so every mail
+  // opened "lakshmi.pillai@kollegeapply.com took this campaign live" — an
+  // address where a person's name belongs, which mail clients then turned
+  // into a mailto link. Resolved here rather than at the call site so it
+  // holds for any caller, and falling back to the address only when the
+  // user has no name on record.
+  const actorName =
+    params.actorName?.trim() ||
+    (
+      await prisma.crmUser.findUnique({
+        where: { email: params.actorEmail },
+        select: { name: true },
+      })
+    )?.name?.trim() ||
+    params.actorEmail;
+
   try {
+    // Score the landing page if nobody has yet, so the mail carries a real
+    // number instead of an empty panel. Scoring is deterministic and costs
+    // one page fetch; the result is stored, so this happens at most once
+    // per request however many mails it sends.
+    await ensureLandingScore(params.requestId);
+
     // The submitted mail is a transcript of the Ops requirement form. Every
     // later mail carries the full picture, because by then the budget, the
     // account and the campaigns are real decisions somebody made.
@@ -83,7 +109,7 @@ export async function mailForTransition(params: {
       reference: brief.reference,
       title: brief.title,
       status: brief.statusLabel,
-      actor: params.actorName || params.actorEmail,
+      actor: actorName,
       requester: address(brief.requesterName, brief.requesterEmail),
       specialist: address(brief.specialistName, brief.specialistEmail),
       assignee: address(brief.specialistName, brief.specialistEmail),
@@ -91,7 +117,12 @@ export async function mailForTransition(params: {
       reasonLabel: reasonLabel(event),
       link: base ? `${base}/dashboard/ad-requests/${params.requestId}` : null,
       highlights: brief.highlights,
+      subtitle: brief.subtitle,
+      meta: brief.meta,
+      ownership: brief.ownership,
+      adCopy: brief.adCopy,
       sections: brief.sections,
+      tables: brief.tables,
       dedupeKey: `${params.round ?? 0}`,
     };
 

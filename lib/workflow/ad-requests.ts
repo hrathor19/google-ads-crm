@@ -11,7 +11,7 @@ import { notify, usersWithPermission } from '@/lib/notifications';
 import { mailForTransition } from '@/lib/email/workflow-mail';
 import { ApiError, badRequest, conflict, forbidden, notFound } from '@/lib/api';
 import type { Principal } from '@/lib/rbac/permissions';
-import { canAccessAccount, hasPermission } from '@/lib/rbac/permissions';
+import { canAccessAccount, hasPermission, actorLabel } from '@/lib/rbac/permissions';
 import {
   SPECIALIST_QUEUE,
   STATUS_LABELS,
@@ -187,7 +187,7 @@ export async function createRequest(
         events: {
           create: {
             type: 'CREATED',
-            message: `${principal.email} created this request.`,
+            message: `${actorLabel(principal)} created this request.`,
             toStatus: 'DRAFT',
             actorId: principal.userId,
           },
@@ -679,8 +679,8 @@ export async function transition(
                   ? 'CHANGES_REQUESTED'
                   : 'STATUS_CHANGED',
         message: reason
-          ? `${principal.email} ${rule!.label}: ${reason}`
-          : `${principal.email} ${rule!.label}.`,
+          ? `${actorLabel(principal)} ${rule!.label}: ${reason}`
+          : `${actorLabel(principal)} ${rule!.label}.`,
         fromStatus: request.status,
         toStatus: target,
         actorId: principal.userId,
@@ -712,7 +712,7 @@ export async function transition(
 
   await notifyForTransition(principal, request, target, reason);
 
-  // Mailed after the commit, deliberately. The transition is done; Brevo
+  // Mailed after the commit, deliberately. The transition is done; the mail provider
   // being slow or down must not roll it back, and `mailForTransition`
   // swallows its own failures for the same reason. The review round is
   // passed so three rechecks send three mails rather than one.
@@ -739,7 +739,7 @@ export async function transition(
     actorId: principal.userId,
     actorEmail: principal.email,
     action: auditAction,
-    description: `${request.reference} — ${principal.email} ${rule!.label}${reason ? `: ${reason}` : ''}`,
+    description: `${request.reference} — ${actorLabel(principal)} ${rule!.label}${reason ? `: ${reason}` : ''}`,
     targetType: 'CrmAdRequest',
     targetId: requestId,
     metadata: {

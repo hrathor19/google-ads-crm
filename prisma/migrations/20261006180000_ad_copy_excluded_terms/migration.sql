@@ -1,0 +1,11 @@
+-- What the copy was forbidden to mention.
+--
+-- Stored on the version rather than only applied at generation, because the
+-- assets stay editable afterwards. Without the list here, someone could type
+-- "Low Fees" back into a headline on the edit screen and nothing would
+-- object — the ban would hold only until the first correction.
+--
+-- Defaults to "fee" in the UI: the figure on a landing page is one intake's
+-- tuition before scholarships, and an ad that quotes it generates calls
+-- about a number that was never the price.
+ALTER TABLE "crm_ad_copy_versions" ADD COLUMN "excluded_terms" JSONB;

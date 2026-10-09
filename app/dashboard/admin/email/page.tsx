@@ -52,6 +52,10 @@ type Settings = {
 
 type Payload = {
   settings: Settings;
+  /** Suppressed addresses that belong to a real, active user. */
+  suppressedUsers: Array<{ email: string; name: string | null; role: string }>;
+  /** Whether the From address is on the domain Infinito is provisioned for. */
+  sender: { provisionedDomain: string; fromDomain: string; matches: boolean };
   routes: Route[];
   events: Array<{ event: string; label: string; description: string; step?: string }>;
   connection: { ok: boolean; detail: string };
@@ -219,7 +223,7 @@ export default function EmailSettingsPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Provider status, straight from Brevo. */}
+          {/* Provider status, straight from Infinito. */}
           <Card>
             <CardContent className="flex flex-wrap items-start gap-3 p-4">
               {data.connection.ok ? (
@@ -235,7 +239,7 @@ export default function EmailSettingsPage() {
               )}
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium">
-                  Brevo {data.connection.ok ? 'connected' : 'not reachable'}
+                  Infinito {data.connection.ok ? 'connected' : 'not reachable'}
                 </p>
                 <p className="mt-0.5 text-sm text-muted-foreground">{data.connection.detail}</p>
               </div>
@@ -278,13 +282,25 @@ export default function EmailSettingsPage() {
               <Field
                 id="fromEmail"
                 label="From address"
-                hint="Has to be a verified sender on the Brevo account."
+                hint="Has to be on a domain registered with Infinito, or the mail is accepted and then never delivered."
               >
                 <Input
                   id="fromEmail"
                   value={settings.fromEmail}
                   onChange={(e) => set('fromEmail', e.target.value)}
                 />
+                {!data.sender.matches && (
+                  <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      Infinito is provisioned for {data.sender.provisionedDomain}, and this
+                      address is on {data.sender.fromDomain}.
+                    </p>
+                    <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-400/90">
+                      It may still be allowed — but if the API keeps reporting success and
+                      nothing arrives, this is the first thing to change back.
+                    </p>
+                  </div>
+                )}
               </Field>
               <Field id="replyTo" label="Reply-to" hint="Optional. Where replies should land.">
                 <Input
@@ -351,6 +367,26 @@ export default function EmailSettingsPage() {
                   onChange={(e) => set('suppressedEmails', e.target.value)}
                   placeholder="admin@kollegeapply.com"
                 />
+                {/* Suppression is invisible from every other screen: a rule
+                    can name a role, resolve to that person, and drop them
+                    here without a trace. Saying so is the only way anyone
+                    finds out before the mail does not arrive. */}
+                {data.suppressedUsers.length > 0 && (
+                  <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2">
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                      {data.suppressedUsers.length === 1 ? 'This address belongs' : 'These addresses belong'}{' '}
+                      to {data.suppressedUsers.length === 1 ? 'an active user' : 'active users'} —
+                      they will never receive a mail, even one addressed to their role.
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                      {data.suppressedUsers.map((u) => (
+                        <li key={u.email} className="text-xs text-amber-700/90 dark:text-amber-400/90">
+                          {u.name ?? u.email} ({u.role}) — {u.email}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </Field>
               <Field
                 id="globalCc"

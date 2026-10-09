@@ -961,6 +961,7 @@ enum CrmAuditAction {
   EMAIL_TEST_SENT
   REQUEST_ACCOUNT_CHANGED
   ASSISTANT_QUERIED
+  KEYWORDS_RESEARCHED
 }
 
 /// A role is a named bundle of permission toggles plus an account scope.
@@ -1307,12 +1308,22 @@ model CrmAdCopyVersion {
   requestId String @map("request_id")
   /// 1-based, per request.
   version   Int
-  tone      String
+  /// Null for anything generated after the tone picker was removed; kept so
+  /// the versions written before it still say what produced them.
+  tone      String?
 
   /// `{ text, characters }[]` — validated against the 30-character headline cap.
   headlines    Json
   /// `{ text, characters }[]` — validated against the 90-character cap.
   descriptions Json
+  /// `{ text, description1, description2 }[]` — 25/35/35 character caps.
+  sitelinks    Json?
+  /// `{ keyword, volume }[]` — the uploaded Keyword Research export this copy
+  /// was written from, kept so the copy can be explained later.
+  keywords     Json?
+  /// `string[]` — words this copy was forbidden to mention, re-checked on
+  /// every edit so the ban survives a correction.
+  excludedTerms Json?  @map("excluded_terms")
   /// Validator output: character-limit failures, duplicate detection, coverage.
   validation   Json?
   /// "gemini" | "deterministic" — which engine produced this version.

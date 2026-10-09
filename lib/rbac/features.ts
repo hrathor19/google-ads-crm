@@ -64,6 +64,14 @@ export const MODULES: ModuleDef[] = [
     actions: ['VIEW', 'EXPORT'],
   },
   {
+    key: 'KEYWORD_PLANNER',
+    label: 'Keyword Planner',
+    description:
+      'Research new keywords against Google\u2019s own search volume. Each search spends one ' +
+      'operation from the shared daily API quota.',
+    actions: ['VIEW', 'EXPORT'],
+  },
+  {
     key: 'FINANCIALS',
     label: 'Spend & Financial Data',
     description:
@@ -214,6 +222,8 @@ export const SEED_ROLES: SeedRole[] = [
       feature('CAMPAIGNS', 'EXPORT'),
       feature('KEYWORDS', 'EXPORT'),
       feature('FINANCIALS', 'EXPORT'),
+      feature('KEYWORD_PLANNER', 'VIEW'),
+      feature('KEYWORD_PLANNER', 'EXPORT'),
       // Every AD_REQUESTS action except BUILD. A Manager runs the approval
       // side; they are not someone you would assign a campaign to, and
       // granting BUILD would put them in the Ad Specialist picker.
@@ -243,6 +253,8 @@ export const SEED_ROLES: SeedRole[] = [
       'budgets. Reporting without financial data.',
     features: [
       ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS'),
+      feature('KEYWORD_PLANNER', 'VIEW'),
+      feature('KEYWORD_PLANNER', 'EXPORT'),
       feature('AD_REQUESTS', 'VIEW'),
       feature('AD_REQUESTS', 'CREATE'),
       feature('AD_REQUESTS', 'EDIT'),
@@ -265,6 +277,8 @@ export const SEED_ROLES: SeedRole[] = [
       ...view('DASHBOARD', 'ACCOUNTS', 'CAMPAIGNS', 'KEYWORDS', 'FINANCIALS'),
       feature('CAMPAIGNS', 'EXPORT'),
       feature('KEYWORDS', 'EXPORT'),
+      feature('KEYWORD_PLANNER', 'VIEW'),
+      feature('KEYWORD_PLANNER', 'EXPORT'),
       feature('AD_REQUESTS', 'VIEW'),
       feature('AD_REQUESTS', 'EDIT'),
       // Steps 5, 12 and 13 — submitting keywords and copy, launching, and

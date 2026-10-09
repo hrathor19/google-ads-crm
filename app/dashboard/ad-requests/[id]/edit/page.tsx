@@ -1,19 +1,21 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/components/data/page-header';
 import { AdRequestForm } from '@/components/data/ad-request-form';
 import { toFormDefaults } from '@/lib/workflow/form-defaults';
-import { ErrorState } from '@/components/data/states';
+import { EmptyState, ErrorState } from '@/components/data/states';
 import { useApi } from '@/lib/hooks/use-api';
+import { REQUEST_STATUS_LABELS } from '@/components/data/status-badge';
 
 type Response = {
   request: {
     id: string;
     reference: string;
+    status: string;
     title: string;
     accountId: number | null;
     objective: string;
@@ -50,6 +52,17 @@ type Response = {
   };
 };
 
+/**
+ * The statuses the API will accept an edit for.
+ *
+ * Mirrors `EDITABLE` in the PATCH handler. Checked here as well because
+ * without it this page happily renders a full, typeable form for a request
+ * the server refuses — somebody filled in a month-by-month lead plan, saved,
+ * and the save came back 409 while the form sat there still showing their
+ * numbers as though they had been stored.
+ */
+const EDITABLE = ['DRAFT', 'CHANGES_REQUESTED', 'REJECTED'];
+
 export default function EditAdRequestPage({ params }: { params: { id: string } }) {
   const { data, isLoading, error, refetch } = useApi<Response>(
     ['ad-request', params.id],
@@ -78,6 +91,20 @@ export default function EditAdRequestPage({ params }: { params: { id: string } }
             <Skeleton className="h-96 w-full rounded-xl" />
             <Skeleton className="h-64 w-full rounded-xl" />
           </div>
+        ) : !EDITABLE.includes(data.request.status) ? (
+          <EmptyState
+            icon={Lock}
+            title="This request can no longer be edited"
+            description={
+              `It has already moved on to "${REQUEST_STATUS_LABELS[data.request.status] ?? data.request.status}". ` +
+              'Ask the reviewer for a recheck to reopen it, and the brief becomes editable again.'
+            }
+            action={
+              <Button asChild>
+                <Link href={`/dashboard/ad-requests/${params.id}`}>Back to the request</Link>
+              </Button>
+            }
+          />
         ) : (
           <AdRequestForm
             requestId={params.id}

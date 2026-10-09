@@ -8,6 +8,7 @@ import {
   Check,
   ExternalLink,
   FileSearch,
+  KeyRound,
   Link2,
   Loader2,
   MessageSquare,
@@ -45,13 +46,25 @@ import { RequestStatusBadge, REQUEST_ACTION_LABELS,
   REQUEST_STATUS_LABELS } from '@/components/data/status-badge';
 import {
   AssetList,
+  CopyBriefFields,
+  DEFAULT_EXCLUDED,
+  D_COUNT,
   D_MAX,
+  GenerateButton,
+  H_COUNT,
   H_MAX,
-  ToneSelector,
+  ExcludedTermsField,
+  KeywordCsvUpload,
+  SITELINK_COUNT,
+  SitelinkList,
   ValidationSummary,
   type Asset,
+  type CopyBriefFields as CopyBriefValues,
+  type Sitelink,
   type Validation,
 } from '@/components/data/ad-copy-panel';
+import type { KeywordVolume } from '@/lib/ai/keyword-csv';
+import { parseExcludedTerms } from '@/lib/ai/exclusions';
 import { LandingScorePanel, type LandingScoreData } from '@/components/data/landing-score-panel';
 import { AdRequestForm } from '@/components/data/ad-request-form';
 import { toFormDefaults } from '@/lib/workflow/form-defaults';
@@ -134,16 +147,18 @@ type RequestDetail = {
   adCopyVersions: Array<{
     id: string;
     version: number;
-    tone: string;
     headlines: Asset[];
     descriptions: Asset[];
+    sitelinks: Sitelink[] | null;
+    keywords: KeywordVolume[] | null;
+    excludedTerms: string[] | null;
     validation: Validation | null;
     backend: string;
     isFinal: boolean;
     createdAt: string;
     createdBy: { name: string };
   }>;
-  landingScores: Array<LandingScoreData & { id: string }>;
+  landingScores: Array<LandingScoreData & { id: string; matchedByUrl?: boolean }>;
 };
 
 type Response = {
@@ -169,12 +184,20 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
   const [reason, setReason] = useState('');
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
-  const [tone, setTone] = useState('professional');
   const [generating, setGenerating] = useState(false);
   const [scoring, setScoring] = useState(false);
+  const [researched, setResearched] = useState<KeywordVolume[]>([]);
+  const [excluded, setExcluded] = useState(DEFAULT_EXCLUDED);
+  // Null until the request has loaded; seeded from it on first render so the
+  // fields show what Ops actually filed rather than empty boxes.
+  const [briefFields, setBriefFields] = useState<CopyBriefValues | null>(null);
+  // Null until edited, so the list always falls back to what is stored.
+  const [keywordDraft, setKeywordDraft] = useState<string[] | null>(null);
+  const [savingKeywords, setSavingKeywords] = useState(false);
   const [draftCopy, setDraftCopy] = useState<{
     headlines: Asset[];
     descriptions: Asset[];
+    sitelinks: Sitelink[];
     validation: Validation;
     backend: string;
     backendReason: string | null;
@@ -194,6 +217,32 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
   }
 
   const r = data.request;
+
+  const briefFromRequest = (): CopyBriefValues => ({
+    institution: r.title,
+    product: r.productService,
+    landingPageUrl: r.landingPageUrl,
+    targetAudience: r.targetAudience ?? '',
+    location: r.location,
+    usps: r.usps ?? '',
+  });
+  const brief = briefFields ?? briefFromRequest();
+
+  // The stored list, unless the reviewer has just changed it.
+  const keywords =
+    keywordDraft ??
+    (r.keywords ?? '')
+      .split(/[\n,]/)
+      .map((k) => k.trim())
+      .filter(Boolean);
+  // Pruning mirrors the API's own rule, so the UI never offers a × that the
+  // server will refuse.
+  const canPruneKeywords =
+    (can('AD_REQUESTS', 'APPROVE') && r.status === 'UNDER_REVIEW') ||
+    (can('AD_REQUESTS', 'BUILD') &&
+      ['AWAITING_AD_SUBMISSION', 'RECHECK_REQUESTED'].includes(r.status));
+  const briefChanged = JSON.stringify(brief) !== JSON.stringify(briefFromRequest());
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['ad-request', params.id] });
     queryClient.invalidateQueries({ queryKey: ['ad-requests'] });
@@ -276,10 +325,22 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       const result = await apiSend<{
         headlines: Asset[];
         descriptions: Asset[];
+        sitelinks: Sitelink[];
         validation: Validation;
         backend: string;
         backendReason: string | null;
-      }>('/api/ai/ad-copy', 'POST', { requestId: params.id, tone, save });
+      }>('/api/ai/ad-copy', 'POST', {
+        requestId: params.id,
+        save,
+        keywordVolumes: researched,
+        excludedTerms: parseExcludedTerms(excluded),
+        institution: brief.institution,
+        product: brief.product,
+        landingPageUrl: brief.landingPageUrl,
+        targetAudience: brief.targetAudience,
+        location: brief.location,
+        usps: brief.usps,
+      });
       setDraftCopy(result);
       if (save) {
         toast({ title: 'Version saved', description: 'It is now in the version history below.' });
@@ -313,6 +374,27 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
       });
     } finally {
       setScoring(false);
+    }
+  }
+
+  async function saveKeywords(next: string[]) {
+    setKeywordDraft(next);
+    setSavingKeywords(true);
+    try {
+      await apiSend(`/api/ad-requests/${params.id}/keywords`, 'PUT', { keywords: next });
+      invalidate();
+    } catch (e) {
+      // Put the list back: a chip that vanishes on a failed save is worse
+      // than one that never left, because the reviewer approves believing
+      // it is gone.
+      setKeywordDraft(null);
+      toast({
+        variant: 'destructive',
+        title: 'Could not update the keywords',
+        description: e instanceof Error ? e.message : 'Unknown error.',
+      });
+    } finally {
+      setSavingKeywords(false);
     }
   }
 
@@ -522,6 +604,61 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
         {/* ─── Ad copy ───────────────────────────────────────────────── */}
         {can('AD_COPY', 'VIEW') && (
           <TabsContent value="copy" className="space-y-4">
+            {/* ── What the reviewer is actually approving ──────────────
+                The keywords and the copy, on the screen where the approve
+                button is. Before this a reviewer had to take the Ad
+                Specialist's word for both, and the only way to object to
+                one keyword was to reject the whole submission and describe
+                the problem in prose. */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <KeyRound className="h-4 w-4 opacity-70" aria-hidden="true" />
+                  Keywords
+                  {keywords.length > 0 && (
+                    <span className="text-sm font-normal text-muted-foreground">
+                      {keywords.length}
+                    </span>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  {canPruneKeywords
+                    ? 'Remove any that will not convert, then approve. Removing one takes effect immediately.'
+                    : 'The list this request goes live with.'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {keywords.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No keywords yet. The Ad Specialist adds them by uploading the Keyword
+                    Research export and marking a copy version final.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {keywords.map((k) => (
+                      <span
+                        key={k}
+                        className="inline-flex items-center gap-1 rounded-full border bg-muted/40 px-2.5 py-1 text-sm"
+                      >
+                        {k}
+                        {canPruneKeywords && (
+                          <button
+                            type="button"
+                            aria-label={`Remove ${k}`}
+                            disabled={savingKeywords}
+                            onClick={() => saveKeywords(keywords.filter((x) => x !== k))}
+                            className="rounded-sm opacity-50 transition-opacity hover:opacity-100 disabled:opacity-30"
+                          >
+                            <X className="h-3 w-3" aria-hidden="true" />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             {can('AD_COPY', 'GENERATE_AI') ? (
               <Card>
                 <CardHeader className="pb-3">
@@ -530,37 +667,55 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
                     Generate responsive search ad copy
                   </CardTitle>
                   <CardDescription>
-                    Grounded in this brief and the live landing page. Headlines are capped at{' '}
-                    {H_MAX} characters, descriptions at {D_MAX}.
+                    {H_COUNT} headlines at {H_MAX} characters, {D_COUNT} descriptions at {D_MAX},
+                    and {SITELINK_COUNT} sitelinks — grounded in this brief and the live landing
+                    page.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <ToneSelector
-                    tone={tone}
-                    onChange={setTone}
+                <CardContent className="space-y-4">
+                  <CopyBriefFields
+                    value={brief}
+                    onChange={setBriefFields}
+                    disabled={generating}
+                    onReset={() => setBriefFields(null)}
+                    changed={briefChanged}
+                  />
+                  <KeywordCsvUpload
+                    rows={researched}
+                    onChange={setResearched}
+                    disabled={generating}
+                  />
+                  <ExcludedTermsField
+                    value={excluded}
+                    onChange={setExcluded}
+                    disabled={generating}
+                  />
+                  <GenerateButton
                     onGenerate={() => generateCopy(false)}
                     generating={generating}
                   />
                   {draftCopy && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={generating}
-                      onClick={() => generateCopy(true)}
-                    >
-                      Save this as a new version
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={generating}
+                        onClick={() => generateCopy(true)}
+                      >
+                        Save this as a new version
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        Then mark it final — that submits the copy and writes the{' '}
+                        {researched.length > 0
+                          ? `${researched.length} researched keyword(s)`
+                          : 'keywords'}{' '}
+                        onto this request.
+                      </span>
+                    </div>
                   )}
                 </CardContent>
               </Card>
-            ) : (
-              <Card>
-                <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                  You can read saved versions, but generating copy needs the AI Ad Copy: Generate
-                  AI permission.
-                </CardContent>
-              </Card>
-            )}
+            ) : null}
 
             {draftCopy && (
               <div className="space-y-3">
@@ -585,7 +740,38 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
                     onChange={(descriptions) => setDraftCopy({ ...draftCopy, descriptions })}
                   />
                 </div>
+                <Card>
+                  <CardContent className="p-4">
+                    <SitelinkList
+                      sitelinks={draftCopy.sitelinks}
+                      editable={can('AD_COPY', 'EDIT')}
+                      onChange={(sitelinks) => setDraftCopy({ ...draftCopy, sitelinks })}
+                    />
+                  </CardContent>
+                </Card>
               </div>
+            )}
+
+            {/* An explicit empty state. A reviewer opening this tab used to
+                see only "generating copy needs the AI Ad Copy permission",
+                which reads as copy being withheld from them — when in fact
+                the Ad Specialist had not written any. */}
+            {r.adCopyVersions.length === 0 && (
+              <Card>
+                <CardContent className="space-y-1 py-8 text-center">
+                  <p className="text-sm font-medium">No ad copy yet</p>
+                  <p className="text-sm text-muted-foreground">
+                    {can('AD_COPY', 'GENERATE_AI')
+                      ? 'Generate it above, then save a version and mark it final.'
+                      : 'The Ad Specialist has not saved a version for this request yet. There is nothing being withheld from you.'}
+                  </p>
+                  {!can('AD_COPY', 'GENERATE_AI') && (
+                    <p className="pt-1 text-xs text-muted-foreground">
+                      Generating copy yourself needs the AI Ad Copy: Generate AI permission.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             )}
 
             {r.adCopyVersions.length > 0 && (
@@ -596,9 +782,6 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
                     <CardHeader className="flex-row items-center justify-between gap-2 space-y-0 pb-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <CardTitle className="text-sm">Version {v.version}</CardTitle>
-                        <Badge variant="secondary" className="font-normal">
-                          {v.tone}
-                        </Badge>
                         <Badge variant="outline" className="font-normal">
                           {v.backend === 'gemini' ? 'Gemini' : 'Deterministic'}
                         </Badge>
@@ -620,9 +803,47 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
                         </Button>
                       )}
                     </CardHeader>
-                    <CardContent className="grid gap-4 lg:grid-cols-2">
-                      <AssetList title="Headlines" assets={v.headlines} limit={H_MAX} />
-                      <AssetList title="Descriptions" assets={v.descriptions} limit={D_MAX} />
+                    <CardContent className="space-y-4">
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <AssetList title="Headlines" assets={v.headlines} limit={H_MAX} />
+                        <AssetList title="Descriptions" assets={v.descriptions} limit={D_MAX} />
+                      </div>
+                      <SitelinkList sitelinks={v.sitelinks ?? []} />
+                      {v.excludedTerms && v.excludedTerms.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          Written without mentioning:{' '}
+                          <span className="font-medium text-foreground">
+                            {v.excludedTerms.join(', ')}
+                          </span>
+                        </p>
+                      )}
+                      {v.keywords && v.keywords.length > 0 && (
+                        <div>
+                          <h3 className="mb-2 text-sm font-semibold">
+                            Keywords
+                            <span className="ml-1.5 font-normal text-muted-foreground">
+                              {v.keywords.length} from research
+                            </span>
+                          </h3>
+                          <div className="flex flex-wrap gap-1">
+                            {v.keywords.slice(0, 24).map((k) => (
+                              <Badge key={k.keyword} variant="secondary" className="font-normal">
+                                {k.keyword}
+                                {k.volume > 0 && (
+                                  <span className="ml-1 text-muted-foreground">
+                                    {k.volume.toLocaleString('en-IN')}
+                                  </span>
+                                )}
+                              </Badge>
+                            ))}
+                            {v.keywords.length > 24 && (
+                              <Badge variant="outline" className="font-normal">
+                                +{v.keywords.length - 24} more
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))}
@@ -664,6 +885,15 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
               </Card>
             ) : (
               <div className="space-y-4">
+                {/* Says where the score came from. Without it, a score run
+                    from the menu for this URL looks like one somebody took
+                    for this request. */}
+                {r.landingScores[0]!.matchedByUrl && (
+                  <p className="text-xs text-muted-foreground">
+                    Matched by URL — scored from the Landing Page Scorer rather than from this
+                    request. Run it here to attach a score of your own.
+                  </p>
+                )}
                 <LandingScorePanel data={r.landingScores[0]!} />
                 {r.landingScores.length > 1 && (
                   <Card>

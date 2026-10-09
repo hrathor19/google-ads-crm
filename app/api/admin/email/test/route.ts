@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { badRequest, clientIp, handle, parseBody, requirePermission } from '@/lib/api';
 import { logAudit } from '@/lib/audit';
-import { sendViaBrevo } from '@/lib/email/brevo';
+import { sendEmail } from '@/lib/email/infinito';
 import { getEmailSettings, isEmail, parseAddress, renderTemplate } from '@/lib/email/settings';
 import { renderBody, resolveRecipients } from '@/lib/email/send';
 import type { CrmNotificationType } from '@prisma/client';
@@ -57,7 +57,7 @@ export async function POST(req: Request) {
       ctx,
       renderTemplate(
         'This is a test from the Ads CRM email configuration. If it reached you, the ' +
-          'Brevo credentials and the sender address are working.',
+          'The Infinito credentials and the sender address are working.',
         {}
       )
     );
@@ -65,7 +65,7 @@ export async function POST(req: Request) {
     const to = parseAddress(body.to);
     if (!to) throw badRequest('Not a valid address.');
 
-    const { messageId } = await sendViaBrevo({
+    const { messageId } = await sendEmail({
       from: { email: settings.fromEmail, name: settings.fromName },
       to: [to],
       replyTo: parseAddress(settings.replyTo ?? '') ?? undefined,

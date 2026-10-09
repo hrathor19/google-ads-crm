@@ -106,6 +106,7 @@ async function principalFor(slug: string): Promise<Principal> {
   return {
     userId: `test-${slug}`,
     email: `${slug}@example.com`,
+    name: `Test ${slug}`,
     roleId: role.id,
     roleSlug: role.slug,
     roleName: role.name,
@@ -192,6 +193,7 @@ describe('a tool run under a principal', () => {
       const tools = await toolsFor({
         userId: 'test-empty',
         email: 'empty@example.com',
+        name: 'Test Empty',
         roleId: role.id,
         roleSlug: role.slug,
         roleName: role.name,

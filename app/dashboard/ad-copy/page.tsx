@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
@@ -11,13 +10,25 @@ import { PageHeader } from '@/components/data/page-header';
 import { EmptyState } from '@/components/data/states';
 import {
   AssetList,
+  CopyBriefFields,
+  DEFAULT_EXCLUDED,
+  D_COUNT,
   D_MAX,
+  GenerateButton,
+  H_COUNT,
   H_MAX,
-  ToneSelector,
+  ExcludedTermsField,
+  KeywordCsvUpload,
+  SITELINK_COUNT,
+  SitelinkList,
   ValidationSummary,
   type Asset,
+  type CopyBriefFields as CopyBriefValues,
+  type Sitelink,
   type Validation,
 } from '@/components/data/ad-copy-panel';
+import type { KeywordVolume } from '@/lib/ai/keyword-csv';
+import { parseExcludedTerms } from '@/lib/ai/exclusions';
 import { apiSend } from '@/lib/hooks/use-api';
 import { usePermissions } from '@/components/providers/permission-provider';
 
@@ -32,18 +43,25 @@ export default function AdCopyPage() {
   const { can } = usePermissions();
   const { toast } = useToast();
 
-  const [product, setProduct] = useState('');
-  const [brand, setBrand] = useState('');
-  const [audience, setAudience] = useState('');
-  const [location, setLocation] = useState('');
-  const [url, setUrl] = useState('');
-  const [usps, setUsps] = useState('');
+  // One field for the name: the standalone tool has no separate record of
+  // the institution, so `institution: null` tells the shared component to
+  // show a single "College / University / Course" box.
+  const [brief, setBrief] = useState<CopyBriefValues>({
+    institution: null,
+    product: '',
+    landingPageUrl: '',
+    targetAudience: '',
+    location: '',
+    usps: '',
+  });
   const [keywords, setKeywords] = useState('');
-  const [tone, setTone] = useState('professional');
+  const [researched, setResearched] = useState<KeywordVolume[]>([]);
+  const [excluded, setExcluded] = useState(DEFAULT_EXCLUDED);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<{
     headlines: Asset[];
     descriptions: Asset[];
+    sitelinks: Sitelink[];
     validation: Validation;
     backend: string;
     backendReason: string | null;
@@ -59,7 +77,7 @@ export default function AdCopyPage() {
   }
 
   async function generate() {
-    if (!product.trim() || !url.trim()) {
+    if (!brief.product.trim() || !brief.landingPageUrl.trim()) {
       toast({
         variant: 'destructive',
         title: 'Two fields are required',
@@ -70,17 +88,17 @@ export default function AdCopyPage() {
     setGenerating(true);
     try {
       const res = await apiSend<typeof result & object>('/api/ai/ad-copy', 'POST', {
-        tone,
-        product,
-        brand: brand || null,
-        targetAudience: audience || 'General audience',
-        location: location || 'India',
-        landingPageUrl: url,
-        usps: usps || null,
+        product: brief.product,
+        targetAudience: brief.targetAudience || 'General audience',
+        location: brief.location || 'India',
+        landingPageUrl: brief.landingPageUrl,
+        usps: brief.usps || null,
         keywords: keywords
           .split(/[\n,]/)
           .map((k) => k.trim())
           .filter(Boolean),
+        keywordVolumes: researched,
+        excludedTerms: parseExcludedTerms(excluded),
       });
       setResult(res);
     } catch (e) {
@@ -98,7 +116,7 @@ export default function AdCopyPage() {
     <>
       <PageHeader
         title="AI ad copy generator"
-        description={`Responsive search ad copy grounded in your brief and the live landing page. Headlines cap at ${H_MAX} characters, descriptions at ${D_MAX}.`}
+        description={`${H_COUNT} headlines at ${H_MAX} characters, ${D_COUNT} descriptions at ${D_MAX}, and ${SITELINK_COUNT} sitelinks — built around the college, university or course name and grounded in the live landing page. Upload the Keyword Research export and the busiest themes get written in first.`}
       />
 
       <div className="grid gap-4 lg:grid-cols-[22rem_1fr]">
@@ -111,83 +129,34 @@ export default function AdCopyPage() {
             <CardDescription>The generator uses only what you supply here.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            <CopyBriefFields value={brief} onChange={setBrief} disabled={generating} stacked />
+            <KeywordCsvUpload
+              rows={researched}
+              onChange={setResearched}
+              disabled={generating}
+            />
+
             <div className="space-y-1.5">
-              <Label htmlFor="product">
-                What are you advertising? <span className="text-destructive">*</span>
+              <Label htmlFor="keywords">
+                {researched.length > 0 ? 'Extra keywords' : 'Keywords'}
               </Label>
-              <Input
-                id="product"
-                value={product}
-                onChange={(e) => setProduct(e.target.value)}
-                placeholder="Two-year full-time MBA"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="brand">Brand</Label>
-              <Input
-                id="brand"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="KollegeApply"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="url">
-                Landing page URL <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="url"
-                type="url"
-                inputMode="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com/mba"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="audience">Target audience</Label>
-              <Input
-                id="audience"
-                value={audience}
-                onChange={(e) => setAudience(e.target.value)}
-                placeholder="Graduates aged 21–26"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="location">Location</Label>
-              <Input
-                id="location"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="Bangalore"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="usps">USPs and offers</Label>
-              <Textarea
-                id="usps"
-                rows={3}
-                value={usps}
-                onChange={(e) => setUsps(e.target.value)}
-                placeholder="NAAC A++, scholarships up to 50%"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="keywords">Keywords</Label>
               <Textarea
                 id="keywords"
-                rows={3}
+                rows={researched.length > 0 ? 2 : 3}
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
                 placeholder={'mba admission\nbest mba college'}
               />
+              {researched.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  The uploaded research is used for ranking; anything typed here is ignored while
+                  a file is loaded.
+                </p>
+              )}
             </div>
-            <ToneSelector
-              tone={tone}
-              onChange={setTone}
-              onGenerate={generate}
-              generating={generating}
-            />
+            <ExcludedTermsField value={excluded} onChange={setExcluded} disabled={generating} />
+
+            <GenerateButton onGenerate={generate} generating={generating} />
           </CardContent>
         </Card>
 
@@ -220,6 +189,15 @@ export default function AdCopyPage() {
                     limit={D_MAX}
                     editable={can('AD_COPY', 'EDIT')}
                     onChange={(descriptions) => setResult({ ...result, descriptions })}
+                  />
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <SitelinkList
+                    sitelinks={result.sitelinks}
+                    editable={can('AD_COPY', 'EDIT')}
+                    onChange={(sitelinks) => setResult({ ...result, sitelinks })}
                   />
                 </CardContent>
               </Card>

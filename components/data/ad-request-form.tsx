@@ -112,7 +112,27 @@ const baseSchema = z
 
 // Split from its refinements so the field list stays readable at runtime:
 // `.refine()` returns a ZodEffects, which has no `.shape`.
-const schema = baseSchema
+/** Exported for the unit tests: the lead-plan rules are easy to get wrong. */
+/** How the Google Ads account is shared with the client. */
+export const ACCOUNT_VISIBILITY = ['Open', 'Hidden', 'OtherAccount', 'Domain'] as const;
+
+/** Radix will not take '' as an item value, so an explicit "none" is needed. */
+const NOT_SET = '__not_set__';
+
+const THIS_YEAR = new Date().getUTCFullYear();
+
+/** `01`–`12` with their names, so a row cannot hold a half-picked month. */
+export const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
+  value: String(i + 1).padStart(2, '0'),
+  label: new Intl.DateTimeFormat('en-IN', { month: 'long', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(2000, i, 1))
+  ),
+}));
+
+/** A plan can look back a little and forward a few intakes. */
+export const YEAR_OPTIONS = Array.from({ length: 5 }, (_, i) => THIS_YEAR - 1 + i);
+
+export const adRequestFormSchema = baseSchema
   .refine((v) => URL_FIELDS.some(([k]) => (v[k] ?? '').trim().length > 0), {
     message: 'Give at least one ads URL — it is the page we score and write copy against.',
     path: ['adUrlClientlpDesktop'],
@@ -123,9 +143,26 @@ const schema = baseSchema
       return months.length === new Set(months).size;
     },
     { message: 'Each month can appear only once.', path: ['leadTargets'] }
+  )
+  // A half-filled row used to be dropped on the way out, without a word.
+  // Pick a month, forget the number, save — and that month was simply gone,
+  // which is indistinguishable from the app losing it. A row is now either
+  // untouched (and ignored) or complete.
+  .refine(
+    (v) =>
+      (v.leadTargets ?? []).every((t) => {
+        const hasMonth = Boolean((t.month ?? '').trim());
+        const hasLeads = String(t.leads ?? '').trim() !== '';
+        return hasMonth === hasLeads;
+      }),
+    {
+      message:
+        'Every month needs a lead number, and every lead number needs a month. Fill the row in or remove it.',
+      path: ['leadTargets'],
+    }
   );
 
-export type AdRequestFormValues = z.infer<typeof schema>;
+export type AdRequestFormValues = z.infer<typeof adRequestFormSchema>;
 
 /**
  * Every field the requirement form captures.
@@ -170,7 +207,7 @@ export function AdRequestForm({
     control,
     formState: { errors, isSubmitting },
   } = useForm<AdRequestFormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(adRequestFormSchema),
     defaultValues: {
       ageRestriction: 'OPEN',
       startDate: new Date().toISOString().slice(0, 10),
@@ -203,9 +240,11 @@ export function AdRequestForm({
       accountVisibility: str(values.accountVisibility),
       reportingPanel: str(values.reportingPanel),
       notes: str(values.notes),
-      // Drop half-filled rows rather than sending a month with no number.
+      // Only fully blank rows are dropped here — an "Add month" the user
+      // never filled in. A half-filled one is refused by the schema above
+      // rather than silently discarded on its way to the server.
       leadTargets: (values.leadTargets ?? [])
-        .filter((t) => t.month && t.leads !== '')
+        .filter((t) => (t.month ?? '').trim() && String(t.leads ?? '').trim() !== '')
         .map((t) => ({ month: t.month, leads: Number(t.leads) })),
     };
 
@@ -241,6 +280,7 @@ export function AdRequestForm({
   }
 
   const clientType = watch('clientType');
+  const accountVisibility = watch('accountVisibility');
   const ageRestriction = watch('ageRestriction');
 
   return (
@@ -396,7 +436,31 @@ export function AdRequestForm({
             label="Open / Hidden / OtherAccount / Domain"
             error={errors.accountVisibility?.message}
           >
-            <Input id="accountVisibility" placeholder="Hidden" {...register('accountVisibility')} />
+            <Select
+              value={accountVisibility || NOT_SET}
+              onValueChange={(v) => setValue('accountVisibility', v === NOT_SET ? '' : v)}
+            >
+              <SelectTrigger id="accountVisibility">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {/* Optional, so it has to be clearable. Radix refuses an
+                    empty string as an item value, hence the sentinel. */}
+                <SelectItem value={NOT_SET}>Not set</SelectItem>
+                {ACCOUNT_VISIBILITY.map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {v}
+                  </SelectItem>
+                ))}
+                {/* Anything already saved that is not one of the four, so
+                    opening an old request and saving it cannot silently
+                    blank a value somebody typed. */}
+                {accountVisibility &&
+                  !(ACCOUNT_VISIBILITY as readonly string[]).includes(accountVisibility) && (
+                  <SelectItem value={accountVisibility}>{accountVisibility}</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
           </Field>
 
           <Field id="location" label="Location (need to be run)" error={errors.location?.message}>
@@ -454,14 +518,54 @@ export function AdRequestForm({
           {months.fields.length === 0 && (
             <p className="text-sm text-muted-foreground">No months added yet.</p>
           )}
-          {months.fields.map((row, i) => (
+          {months.fields.map((row, i) => {
+            const [rowYear = '', rowMonth = ''] = (leadRows[i]?.month ?? '').split('-');
+            // A month with no year is the trap this replaced: the native
+            // month input reports an empty value until *both* parts are
+            // filled, so "October ----" looked chosen and submitted nothing.
+            // Picking a month here always produces a complete value, because
+            // the year falls back to the one already shown.
+            const setPart = (part: 'year' | 'month', value: string) => {
+              const year = part === 'year' ? value : rowYear || String(THIS_YEAR);
+              const month = part === 'month' ? value : rowMonth;
+              setValue(`leadTargets.${i}.month` as const, month ? `${year}-${month}` : '', {
+                shouldValidate: true,
+                shouldDirty: true,
+              });
+            };
+
+            return (
             <div key={row.id} className="flex items-end gap-2">
               <Field id={`leadTargets.${i}.month`} label={i === 0 ? 'Month' : ''} className="flex-1">
-                <Input
-                  id={`leadTargets.${i}.month`}
-                  type="month"
-                  {...register(`leadTargets.${i}.month` as const)}
-                />
+                <div className="flex gap-2">
+                  <Select value={rowMonth} onValueChange={(v) => setPart('month', v)}>
+                    <SelectTrigger id={`leadTargets.${i}.month`} className="flex-1">
+                      <SelectValue placeholder="Month" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {MONTH_OPTIONS.map((m) => (
+                        <SelectItem key={m.value} value={m.value}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={rowYear || String(THIS_YEAR)}
+                    onValueChange={(v) => setPart('year', v)}
+                  >
+                    <SelectTrigger id={`leadTargets.${i}.year`} className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {YEAR_OPTIONS.map((y) => (
+                        <SelectItem key={y} value={String(y)}>
+                          {y}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </Field>
               <Field id={`leadTargets.${i}.leads`} label={i === 0 ? 'Leads' : ''} className="w-32">
                 <Input
@@ -481,10 +585,18 @@ export function AdRequestForm({
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
-          ))}
+            );
+          })}
 
-          {errors.leadTargets?.message && (
-            <p className="text-xs text-destructive">{errors.leadTargets.message}</p>
+          {/* `root` as well as `message`: react-hook-form files an error
+              aimed at a field array under `.root`, so reading `.message`
+              alone showed nothing — the submit button simply did nothing
+              and gave no reason, which is how a blocked save reads as a
+              broken one. */}
+          {(errors.leadTargets?.root?.message ?? errors.leadTargets?.message) && (
+            <p className="text-xs text-destructive">
+              {errors.leadTargets?.root?.message ?? errors.leadTargets?.message}
+            </p>
           )}
 
           <div className="flex flex-wrap items-center gap-3">
