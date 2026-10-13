@@ -6,6 +6,12 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { env } from '@/lib/env';
+import {
+  normaliseRecipients,
+  validateRecipients,
+  type RequestRecipient,
+} from '@/lib/workflow/recipients';
 import { logAudit } from '@/lib/audit';
 import { notify, usersWithPermission } from '@/lib/notifications';
 import { mailForTransition } from '@/lib/email/workflow-mail';
@@ -125,6 +131,9 @@ export type CreateRequestInput = {
 
   /** Month-by-month lead plan: `{ month: 'YYYY-MM', leads }`. */
   leadTargets?: Array<{ month: string; leads: number }>;
+
+  /** Extra people copied on this request's mail, and no other request's. */
+  recipients?: RequestRecipient[];
 };
 
 export async function createRequest(
@@ -132,6 +141,13 @@ export async function createRequest(
   input: CreateRequestInput,
   opts: { submit?: boolean; ip?: string | null } = {}
 ) {
+  // Validated here rather than in the route so every caller is covered. The
+  // domain rule is the reason this matters: these mails carry the assigned
+  // budget and the required CPL, so the list cannot reach outside the company.
+  const recipients = normaliseRecipients(input.recipients ?? []);
+  const recipientProblem = validateRecipients(recipients, env.auth().allowedDomains);
+  if (recipientProblem) throw badRequest(recipientProblem);
+
   const request = await prisma.$transaction(async (tx) => {
     const reference = await nextReference(tx);
     return tx.crmAdRequest.create({
@@ -179,6 +195,16 @@ export async function createRequest(
               create: input.leadTargets.map((t) => ({
                 month: new Date(`${t.month}-01T00:00:00.000Z`),
                 leads: t.leads,
+              })),
+            }
+          : undefined,
+        recipients: recipients.length
+          ? {
+              create: recipients.map((r) => ({
+                email: r.email,
+                name: r.name,
+                addedById: principal.userId,
+                addedByEmail: principal.email,
               })),
             }
           : undefined,

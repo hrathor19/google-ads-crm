@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { RequestRecipientsCard } from '@/components/data/request-recipients-card';
 import {
   Dialog,
   DialogContent,
@@ -537,6 +538,8 @@ export default function AdRequestDetailPage({ params }: { params: { id: string }
           </CardContent>
         </Card>
       )}
+
+      <RequestRecipientsCard requestId={r.id} />
 
       <Tabs defaultValue="brief">
         <TabsList>

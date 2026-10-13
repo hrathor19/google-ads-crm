@@ -2,6 +2,7 @@ import 'server-only';
 import type { CrmNotificationType } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
+import { isEmailAddress } from '@/lib/workflow/recipients';
 import type { Address } from './infinito';
 
 /**
@@ -232,9 +233,10 @@ export function parseAddress(value: string): Address | null {
 }
 
 export function isEmail(value: string): boolean {
-  // Deliberately permissive: the provider is the real authority, and a strict
-  // pattern rejects addresses that work.
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+  // One definition, shared with the requirement form: the browser and the
+  // server must agree on what counts as an address, or a list saves in one
+  // and is rejected by the other.
+  return isEmailAddress(value);
 }
 
 /** Split a comma- or newline-separated list into addresses, dropping blanks. */

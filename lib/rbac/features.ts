@@ -91,6 +91,14 @@ export const MODULES: ModuleDef[] = [
     actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'APPROVE', 'ASSIGN', 'BUDGET', 'BUILD', 'EXPORT'],
   },
   {
+    key: 'CONTACTS',
+    label: 'Mail Contacts',
+    description:
+      'The address book the requirement form picks from when choosing who to copy on a ' +
+      'campaign\'s mail.',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE'],
+  },
+  {
     key: 'AD_COPY',
     label: 'AI Ad Copy',
     description: 'Generate, edit and finalise responsive search ad copy.',
@@ -235,6 +243,7 @@ export const SEED_ROLES: SeedRole[] = [
       feature('AD_REQUESTS', 'ASSIGN'),
       feature('AD_REQUESTS', 'BUDGET'),
       feature('AD_REQUESTS', 'EXPORT'),
+      ...all('CONTACTS'),
       feature('AD_COPY', 'VIEW'),
       feature('LANDING_SCORE', 'VIEW'),
       feature('AUDIT', 'VIEW'),
@@ -265,6 +274,12 @@ export const SEED_ROLES: SeedRole[] = [
       feature('AD_REQUESTS', 'APPROVE'),
       feature('AD_COPY', 'VIEW'),
       feature('LANDING_SCORE', 'VIEW'),
+      // Ops name the sales POC on a campaign, so they maintain the list they
+      // pick from. Not DELETE: removing somebody is a Manager's call, and
+      // marking them inactive is the reversible thing Ops actually needs.
+      feature('CONTACTS', 'VIEW'),
+      feature('CONTACTS', 'CREATE'),
+      feature('CONTACTS', 'EDIT'),
     ],
   },
   {
@@ -285,6 +300,7 @@ export const SEED_ROLES: SeedRole[] = [
       // finishing. Its own action so the "Ad Specialist" picker lists the
       // people who do the work, not everyone who can edit a brief.
       feature('AD_REQUESTS', 'BUILD'),
+      feature('CONTACTS', 'VIEW'),
       ...all('AD_COPY'),
       ...all('LANDING_SCORE'),
       feature('SYNC', 'VIEW'),

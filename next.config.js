@@ -1,3 +1,20 @@
+/**
+ * The host this deployment answers on, read off the URL the app already has
+ * to know. Server Actions reject a request whose Origin is not on the allowed
+ * list, so a deploy behind a real domain has to name it or every action is
+ * refused — and deriving it here means one thing to set at deploy time
+ * (`PUBLIC_BASE_URL`) rather than a second list to keep in step with it.
+ */
+const publicHost = (() => {
+  const url = process.env.PUBLIC_BASE_URL || process.env.NEXTAUTH_URL || '';
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+})();
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // `next dev` and `next build` both write into `.next`, so building while the
@@ -7,7 +24,9 @@ const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000'],
+      // localhost stays on the list so a developer's machine keeps working
+      // whatever the deployed host is.
+      allowedOrigins: [publicHost, 'localhost:3000'].filter(Boolean),
     },
     // The Google Ads SDK and the landing-page scraper are server-only and pull
     // in Node built-ins; keeping them external stops Next from bundling them

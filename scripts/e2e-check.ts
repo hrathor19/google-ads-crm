@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { ALL_FEATURES, SEED_ROLES } from '@/lib/rbac/features';
 import { buildRequestBrief } from '@/lib/email/brief';
+import { resolveRecipients } from '@/lib/email/send';
 
 const BASE = process.env.E2E_BASE ?? 'http://localhost:3000';
 const prisma = new PrismaClient();
@@ -1641,6 +1642,246 @@ async function main() {
       method: 'DELETE',
     });
     check('A default role cannot be deleted', sysDelete.status === 409, sysDelete.body?.error);
+
+  console.log('\n── Mail contacts ──');
+  {
+    type Contact = { id: string; name: string; email: string; isActive: boolean };
+
+    const blocked = await adsSession.json(`/api/contacts`, {
+      method: 'POST',
+      body: JSON.stringify({ name: 'X', email: 'x@kollegeapply.com' }),
+    });
+    check(
+      'The Ads team can read the directory but not add to it',
+      blocked.status === 403,
+      `got ${blocked.status}`
+    );
+
+    const made = await opsSession.json<{ contact: Contact }>('/api/contacts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'E2E Sales POC', email: 'E2E.Sales@KollegeApply.com' }),
+    });
+    check('Operations can add a contact', made.status === 200, `got ${made.status}`);
+    check(
+      'The address is stored lowercased',
+      made.body?.contact.email === 'e2e.sales@kollegeapply.com',
+      made.body?.contact.email
+    );
+
+    const dupe = await opsSession.json<{ error: string }>('/api/contacts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Someone else', email: 'e2e.sales@kollegeapply.com' }),
+    });
+    check('The same address cannot be listed twice', dupe.status === 409, `got ${dupe.status}`);
+
+    const outside = await opsSession.json<{ error: string }>('/api/contacts', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'LPU POC', email: 'poc@lpu.in' }),
+    });
+    check(
+      'A contact outside the company domain is refused',
+      outside.status === 400 && /budget/i.test(outside.body?.error ?? ''),
+      `got ${outside.status}: ${outside.body?.error ?? ''}`
+    );
+
+    // The import: a header row, a duplicate, a bad address, and an address
+    // with no name — the four things a real file actually contains.
+    const imported = await opsSession.json<{
+      imported: number;
+      skipped: Array<{ value: string; reason: string }>;
+    }>('/api/contacts/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        csv: [
+          'Name,Email',
+          'E2E Import One,e2e.import1@kollegeapply.com',
+          'E2E Duplicate,e2e.sales@kollegeapply.com',
+          'E2E Broken,not-an-address',
+          ',e2e.import2@kollegeapply.com',
+        ].join('\n'),
+      }),
+    });
+    check(
+      'A CSV import adds the usable rows',
+      imported.status === 200 && imported.body?.imported === 2,
+      `got ${imported.status} with ${imported.body?.imported ?? 0}`
+    );
+    check(
+      'And reports every row it skipped, with a reason',
+      (imported.body?.skipped.length ?? 0) === 2 &&
+        imported.body!.skipped.every((x) => Boolean(x.reason)),
+      (imported.body?.skipped ?? []).map((x) => `${x.value}: ${x.reason}`).join(' | ')
+    );
+    check(
+      'A row with no name gets one read off the address',
+      (
+        await prisma.crmMailContact.findUnique({
+          where: { email: 'e2e.import2@kollegeapply.com' },
+          select: { name: true },
+        })
+      )?.name === 'E2e Import',
+      'name derived from the address'
+    );
+
+    const listed = await opsSession.json<{ contacts: Contact[] }>('/api/contacts');
+    check(
+      'The directory lists them for the picker',
+      listed.status === 200 &&
+        listed.body!.contacts.some((c) => c.email === 'e2e.sales@kollegeapply.com'),
+      `${listed.body?.contacts.length ?? 0} contact(s)`
+    );
+
+    // Switched off rather than deleted is the reversible thing, and it must
+    // not disturb anybody already on a trail.
+    const off = await opsSession.json<{ contact: Contact }>(
+      `/api/contacts/${made.body!.contact.id}`,
+      { method: 'PATCH', body: JSON.stringify({ isActive: false }) }
+    );
+    check(
+      'A contact can be switched off without being deleted',
+      off.status === 200 && off.body?.contact.isActive === false,
+      `got ${off.status}`
+    );
+
+    const cannotDelete = await opsSession.json(`/api/contacts/${made.body!.contact.id}`, {
+      method: 'DELETE',
+    });
+    check(
+      'Operations cannot delete a contact outright',
+      cannotDelete.status === 403,
+      `got ${cannotDelete.status}`
+    );
+
+    await prisma.crmMailContact.deleteMany({
+      where: { email: { startsWith: 'e2e.' } },
+    });
+  }
+
+  console.log('\n── Per-request mail trail ──');
+  {
+    // Who is copied on ONE request. Every other recipient rule is global, so
+    // the thing worth proving is the opposite of the usual: that these people
+    // reach this request's mail and nobody else's.
+    const read = await opsSession.json<{
+      recipients: Array<{ email: string }>;
+      max: number;
+      allowedDomains: string[];
+    }>(`/api/ad-requests/${requestId}/recipients`);
+    check('The mail trail is readable', read.status === 200, `got ${read.status}`);
+
+    const outside = await opsSession.json<{ error: string }>(
+      `/api/ad-requests/${requestId}/recipients`,
+      { method: 'PUT', body: JSON.stringify({ recipients: [{ email: 'poc@lpu.in' }] }) }
+    );
+    // The mail carries the assigned budget and the required CPL, so an
+    // address outside the company is a data-exposure question, not a typo.
+    check(
+      'An address outside the company domain is refused',
+      outside.status === 400 && /budget/i.test(outside.body?.error ?? ''),
+      `got ${outside.status}: ${outside.body?.error ?? ''}`
+    );
+
+    const saved = await opsSession.json<{ recipients: Array<{ email: string }> }>(
+      `/api/ad-requests/${requestId}/recipients`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          recipients: [
+            { email: 'Sales.POC@KollegeApply.com', name: 'Sales POC' },
+            { email: 'sales.poc@kollegeapply.com' },
+          ],
+        }),
+      }
+    );
+    check(
+      'A company address is accepted, and the same person twice counts once',
+      saved.status === 200 && saved.body?.recipients.length === 1,
+      `got ${saved.status} with ${saved.body?.recipients.length ?? 0}`
+    );
+    check(
+      'It is stored lowercased',
+      saved.body?.recipients[0]?.email === 'sales.poc@kollegeapply.com',
+      saved.body?.recipients[0]?.email
+    );
+
+    // The point of the feature: this list belongs to this request alone.
+    //
+    // Test mode is lifted for these two resolutions, because it collapses
+    // every recipient to the sink — which would make the first check
+    // impossible and the second one pass without proving anything. Nothing
+    // is sent here: `resolveRecipients` works out the audience and stops.
+    await prisma.crmEmailSetting.update({
+      where: { id: 1 },
+      data: { testModeRecipient: null },
+    });
+    let to: Array<{ email: string }> = [];
+    let cc: Array<{ email: string }> = [];
+    let second: { to: Array<{ email: string }>; cc: Array<{ email: string }> } = { to: [], cc: [] };
+    // Made for this check rather than found, because the isolation guarantee
+    // is the whole point of the feature and a check that skips itself when no
+    // second request happens to exist proves nothing.
+    const otherForTrail = await prisma.crmAdRequest.create({
+      data: {
+        reference: 'AR-E2E-TRAIL',
+        title: 'A different campaign',
+        objective: 'LEAD_GENERATION',
+        productService: 'MBA',
+        location: 'India',
+        landingPageUrl: 'https://example.com/other',
+        startDate: new Date(),
+        status: 'SUBMITTED',
+        createdById: ops.id,
+      },
+      select: { id: true },
+    });
+    try {
+      ({ to, cc } = await resolveRecipients('REQUEST_SUBMITTED', {
+        requestId,
+        reference: 'AR-E2E',
+        title: 'Mail trail check',
+        status: 'Submitted',
+        requester: ops.email,
+      }));
+      second = await resolveRecipients('REQUEST_SUBMITTED', {
+        requestId: otherForTrail.id,
+        reference: 'AR-E2E-TRAIL',
+        title: 'A different campaign',
+        status: 'Submitted',
+        requester: ops.email,
+      });
+    } finally {
+      await prisma.crmEmailSetting.update({
+        where: { id: 1 },
+        data: { testModeRecipient: MAIL_SINK },
+      });
+    }
+    const everyone = [...to, ...cc].map((a) => a.email);
+    check(
+      'They are copied on this request\'s mail',
+      everyone.includes('sales.poc@kollegeapply.com'),
+      everyone.join(', ')
+    );
+
+    const everyoneElse = [...second.to, ...second.cc].map((a) => a.email);
+    check(
+      'And on no other request',
+      everyoneElse.length > 0 && !everyoneElse.includes('sales.poc@kollegeapply.com'),
+      everyoneElse.join(', ') || '(nobody resolved — the check would prove nothing)'
+    );
+    await prisma.crmAdRequest.delete({ where: { id: otherForTrail.id } });
+
+    // The brief closes to edits once a request is submitted; this list does
+    // not, which is the whole reason it has its own endpoint.
+    const cleared = await opsSession.json<{ recipients: unknown[] }>(
+      `/api/ad-requests/${requestId}/recipients`,
+      { method: 'PUT', body: JSON.stringify({ recipients: [] }) }
+    );
+    check(
+      'The trail stays editable after submission',
+      cleared.status === 200 && cleared.body?.recipients.length === 0,
+      `got ${cleared.status}`
+    );
+  }
 
     console.log('\n── Workflow email ──');
 

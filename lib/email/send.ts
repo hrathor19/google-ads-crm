@@ -163,10 +163,26 @@ export async function resolveRecipients(
     return out;
   };
 
+  // The people this one request named. Routes and the global CC apply to
+  // every request alike; this list belongs to this request only — the sales
+  // POC for an LPU campaign, who has no business on anybody else's trail.
+  //
+  // Read here rather than carried on the context so it is always current:
+  // somebody added at approval is on every mail from then on, without the
+  // caller having to remember to pass them.
+  const perRequest = ctx.requestId
+    ? await prisma.crmAdRequestRecipient.findMany({
+        where: { requestId: ctx.requestId },
+        select: { email: true, name: true },
+        orderBy: { addedAt: 'asc' },
+      })
+    : [];
+
   let to = dedupe([...(await resolveRoles(route.toRoles)), ...parseAddressList(route.toEmails)]);
   let cc = dedupe([
     ...(await resolveRoles(route.ccRoles)),
     ...parseAddressList(route.cc),
+    ...perRequest.map((r) => ({ email: r.email, name: r.name ?? undefined })),
     ...parseAddressList(settings.globalCc),
   ]);
   let bcc = dedupe([...parseAddressList(route.bcc), ...parseAddressList(settings.globalBcc)]);

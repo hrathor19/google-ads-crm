@@ -800,7 +800,6 @@ enum CrmEmailRecipient {
   ADS_TEAM
 }
 
-
 /// Email settings, one row. `id` is pinned so there can only ever be one.
 model CrmEmailSetting {
   id Int @id @default(1)
@@ -960,6 +959,11 @@ enum CrmAuditAction {
   EMAIL_SETTINGS_UPDATED
   EMAIL_TEST_SENT
   REQUEST_ACCOUNT_CHANGED
+  REQUEST_RECIPIENTS_CHANGED
+  CONTACT_CREATED
+  CONTACT_UPDATED
+  CONTACT_DELETED
+  CONTACTS_IMPORTED
   ASSISTANT_QUERIED
   KEYWORDS_RESEARCHED
 }
@@ -1039,17 +1043,19 @@ model CrmUser {
   role          CrmRole          @relation(fields: [roleId], references: [id])
   accountScopes CrmUserAccount[]
 
-  requestsCreated    CrmAdRequest[]       @relation("requestCreatedBy")
-  requestsAssigned   CrmAdRequest[]       @relation("requestAssignedTo")
+  requestsCreated    CrmAdRequest[]          @relation("requestCreatedBy")
+  requestsAssigned   CrmAdRequest[]          @relation("requestAssignedTo")
   events             CrmAdRequestEvent[]
   adCopyVersions     CrmAdCopyVersion[]
   landingScores      CrmLandingScore[]
   notifications      CrmNotification[]
-  managedRequests    CrmAdRequest[]       @relation("requestAccountManager")
-  specialistRequests CrmAdRequest[]       @relation("requestAdSpecialist")
-  reviewsGiven       CrmAdRequestReview[] @relation("reviewBy")
-  emailSettings      CrmEmailSetting[]    @relation("emailSettingUpdatedBy")
-  campaignLinks      CrmAdRequestCampaign[] @relation("campaignLinkedBy")
+  managedRequests    CrmAdRequest[]          @relation("requestAccountManager")
+  specialistRequests CrmAdRequest[]          @relation("requestAdSpecialist")
+  reviewsGiven       CrmAdRequestReview[]    @relation("reviewBy")
+  emailSettings      CrmEmailSetting[]       @relation("emailSettingUpdatedBy")
+  campaignLinks      CrmAdRequestCampaign[]  @relation("campaignLinkedBy")
+  recipientsAdded    CrmAdRequestRecipient[] @relation("requestRecipientAddedBy")
+  mailContacts       CrmMailContact[]        @relation("mailContactCreatedBy")
   auditLogs          CrmAuditLog[]
 
   @@index([roleId])
@@ -1180,6 +1186,7 @@ model CrmAdRequest {
   adCopyVersions CrmAdCopyVersion[]
   landingScores  CrmLandingScore[]
   notifications  CrmNotification[]
+  recipients     CrmAdRequestRecipient[]
 
   @@index([status])
   @@index([accountId])
@@ -1232,8 +1239,8 @@ model CrmAdRequestReview {
 /// is still honoured when nothing is linked here, but new links land here and
 /// reporting reads this first.
 model CrmAdRequestCampaign {
-  id        String @id @default(cuid())
-  requestId String @map("request_id")
+  id         String @id @default(cuid())
+  requestId  String @map("request_id")
   /// `campaigns.id` — the internal pk, not the Google campaign id, so the
   /// link survives a campaign being renamed and breaks loudly if the
   /// campaign is removed from the synced data.
@@ -1264,6 +1271,71 @@ model CrmAdRequestLeadTarget {
   @@unique([requestId, month])
   @@index([requestId])
   @@map("crm_ad_request_lead_targets")
+}
+
+/// The address book the requirement form picks from.
+///
+/// Typing an address into every request was the first shape of this, and it
+/// put the same sales POC in by hand on ten campaigns with a different
+/// spelling of their name each time. Keeping people in one list makes the
+/// request form a chooser rather than a text box.
+///
+/// Requests do NOT reference these rows. A trail stores the name and address
+/// it was given, so removing somebody from the directory cannot rewrite who
+/// was copied on a campaign that already ran.
+model CrmMailContact {
+  id    String @id @default(cuid())
+  name  String
+  /// Lowercased on the way in; unique, so one person cannot be listed twice.
+  email String @unique
+
+  /// Off rather than deleted, so somebody who has left stops appearing in the
+  /// picker without disturbing the trails they are already on.
+  isActive Boolean @default(true) @map("is_active")
+
+  /// Denormalised beside the relation, so the row still says who added them
+  /// after that user is deleted.
+  createdById    String?  @map("created_by_id")
+  createdByEmail String?  @map("created_by_email")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  createdBy CrmUser? @relation("mailContactCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([isActive, name])
+  @@map("crm_mail_contacts")
+}
+
+/// Extra people to keep on one request's mail trail.
+///
+/// Routes and the global CC apply to every request alike. This is the list
+/// that belongs to *this* request — the sales POC for an LPU campaign, say,
+/// who has no business on anybody else's thread.
+///
+/// Addresses only, not users: the people added here are copied on mail, not
+/// given access to the app. They are still restricted to an allowed domain,
+/// because the mail carries the assigned budget and the required CPL.
+model CrmAdRequestRecipient {
+  id        String  @id @default(cuid())
+  requestId String  @map("request_id")
+  /// Stored lowercased, so one person cannot be added twice by letter case.
+  email     String
+  /// Shown instead of the bare address where we know it.
+  name      String?
+
+  /// Who put them on the trail. Denormalised alongside the relation so the
+  /// entry still says who did it after that user is deleted, which is the
+  /// same reason `crm_audit_logs` keeps `actor_email`.
+  addedById    String?  @map("added_by_id")
+  addedByEmail String?  @map("added_by_email")
+  addedAt      DateTime @default(now()) @map("added_at")
+
+  request CrmAdRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  addedBy CrmUser?     @relation("requestRecipientAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@unique([requestId, email])
+  @@index([requestId])
+  @@map("crm_ad_request_recipients")
 }
 
 model CrmAdRequestEvent {
@@ -1304,8 +1376,8 @@ model CrmAdRequestAttachment {
 /// One saved generation of RSA copy. Multiple versions per request; at most one
 /// carries `isFinal` (enforced in the service).
 model CrmAdCopyVersion {
-  id        String @id @default(cuid())
-  requestId String @map("request_id")
+  id        String  @id @default(cuid())
+  requestId String  @map("request_id")
   /// 1-based, per request.
   version   Int
   /// Null for anything generated after the tone picker was removed; kept so
@@ -1313,21 +1385,21 @@ model CrmAdCopyVersion {
   tone      String?
 
   /// `{ text, characters }[]` — validated against the 30-character headline cap.
-  headlines    Json
+  headlines     Json
   /// `{ text, characters }[]` — validated against the 90-character cap.
-  descriptions Json
+  descriptions  Json
   /// `{ text, description1, description2 }[]` — 25/35/35 character caps.
-  sitelinks    Json?
+  sitelinks     Json?
   /// `{ keyword, volume }[]` — the uploaded Keyword Research export this copy
   /// was written from, kept so the copy can be explained later.
-  keywords     Json?
+  keywords      Json?
   /// `string[]` — words this copy was forbidden to mention, re-checked on
   /// every edit so the ban survives a correction.
   excludedTerms Json?  @map("excluded_terms")
   /// Validator output: character-limit failures, duplicate detection, coverage.
-  validation   Json?
+  validation    Json?
   /// "gemini" | "deterministic" — which engine produced this version.
-  backend      String
+  backend       String
 
   isFinal     Boolean  @default(false) @map("is_final")
   createdById String   @map("created_by_id")

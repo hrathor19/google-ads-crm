@@ -1,4 +1,9 @@
 import { z } from 'zod';
+import {
+  EMAIL_MAX,
+  MAX_REQUEST_RECIPIENTS,
+  RECIPIENT_NAME_MAX,
+} from '@/lib/workflow/recipients';
 import { AdRequestAgeRestriction, AdRequestClientType, AdRequestStatus, CampaignObjective } from '@prisma/client';
 
 /**
@@ -147,10 +152,24 @@ function withBriefRules<T extends z.ZodTypeAny>(schema: T) {
 
 export const adRequestInputSchema = withBriefRules(adRequestFields);
 
+/** One extra person to copy on this request's mail. */
+export const requestRecipientSchema = z.object({
+  email: z.string().trim().min(1).max(EMAIL_MAX),
+  name: z.string().trim().max(RECIPIENT_NAME_MAX).nullish(),
+});
+
 export const createAdRequestSchema = withBriefRules(
   adRequestFields.extend({
     /** Save as draft, or submit for approval straight away. */
     submit: z.boolean().optional(),
+    /**
+     * Deliberately not part of `adRequestFields`, so it stays out of the
+     * patch schema: the ordinary brief edit closes once a request is
+     * submitted, and the whole point of this list is that somebody can be
+     * added at approval or go-live. Updates go through
+     * `/api/ad-requests/[id]/recipients`, which is open at every status.
+     */
+    recipients: z.array(requestRecipientSchema).max(MAX_REQUEST_RECIPIENTS).optional(),
   })
 );
 

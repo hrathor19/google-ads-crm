@@ -55,6 +55,10 @@ const detailSelect = {
   adUrlClientlpMobile: true,
   adUrlClientlpBing: true,
   leadTargets: { orderBy: { month: 'asc' }, select: { month: true, leads: true } },
+  recipients: {
+    orderBy: { addedAt: 'asc' },
+    select: { id: true, email: true, name: true, addedByEmail: true, addedAt: true },
+  },
 
   linkedCampaignId: true,
   campaignLinks: {

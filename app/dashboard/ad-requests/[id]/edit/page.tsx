@@ -49,6 +49,7 @@ type Response = {
     adUrlClientlpMobile: string | null;
     adUrlClientlpBing: string | null;
     leadTargets?: Array<{ month: string; leads: number }>;
+    recipients?: Array<{ email: string; name: string | null }>;
   };
 };
 

@@ -35,6 +35,7 @@ export type RequestFormSource = {
   adUrlClientlpMobile: string | null;
   adUrlClientlpBing: string | null;
   leadTargets?: Array<{ month: string; leads: number }>;
+  recipients?: Array<{ email: string; name: string | null }>;
 };
 
 /** Every numeric field round-trips as a string: the inputs are text boxes. */
@@ -72,5 +73,7 @@ export function toFormDefaults(r: RequestFormSource): Partial<AdRequestFormValue
       month: String(t.month).slice(0, 7),
       leads: String(t.leads),
     })),
+
+    recipients: (r.recipients ?? []).map((p) => ({ email: p.email, name: p.name })),
   };
 }

@@ -18,6 +18,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
+import { RecipientsField } from '@/components/data/recipients-field';
+import {
+  MAX_REQUEST_RECIPIENTS,
+  normaliseRecipients,
+  type RequestRecipient,
+} from '@/lib/workflow/recipients';
 import { cn } from '@/lib/utils';
 import { apiSend, useApi } from '@/lib/hooks/use-api';
 import { OBJECTIVE_LABELS } from './status-badge';
@@ -107,6 +113,16 @@ const baseSchema = z
     leadTargets: z
       .array(z.object({ month: z.string(), leads: z.string() }))
       .max(36)
+      .optional(),
+
+    /**
+     * Extra people copied on this request's mail. Shape only — the domain
+     * rule is the server's, because it reads `AUTH_ALLOWED_DOMAINS` and the
+     * browser is told the answer rather than trusted to work it out.
+     */
+    recipients: z
+      .array(z.object({ email: z.string(), name: z.string().nullish() }))
+      .max(MAX_REQUEST_RECIPIENTS)
       .optional(),
   });
 
@@ -212,6 +228,7 @@ export function AdRequestForm({
       ageRestriction: 'OPEN',
       startDate: new Date().toISOString().slice(0, 10),
       leadTargets: [],
+      recipients: [],
       ...defaults,
     },
   });
@@ -248,9 +265,19 @@ export function AdRequestForm({
         .map((t) => ({ month: t.month, leads: Number(t.leads) })),
     };
 
+    // Normalised once more here: a chip can be left in the box and committed
+    // on blur after the last render, and the server would reject a duplicate.
+    const recipients = normaliseRecipients(
+      (values.recipients ?? []) as RequestRecipient[]
+    );
+
     try {
       if (requestId) {
         await apiSend(`/api/ad-requests/${requestId}`, 'PATCH', payload);
+        // Its own endpoint, not part of the patch: the brief closes to edits
+        // once a request is submitted, while the mail trail stays open so a
+        // POC named at approval can still be added.
+        await apiSend(`/api/ad-requests/${requestId}/recipients`, 'PUT', { recipients });
         if (submit) {
           await apiSend(`/api/ad-requests/${requestId}/transition`, 'POST', {
             target: 'SUBMITTED',
@@ -261,6 +288,7 @@ export function AdRequestForm({
       } else {
         const created = await apiSend<{ id: string }>('/api/ad-requests', 'POST', {
           ...payload,
+          recipients,
           submit,
         });
         toast({
@@ -628,6 +656,29 @@ export function AdRequestForm({
               </p>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Mail trail ────────────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="px-4 pb-2 pt-4">
+          <CardTitle className="text-base">Keep on the mail trail</CardTitle>
+          <CardDescription>
+            Anyone who should see every mail about this campaign — the sales POC, say.
+            They are copied on this request only, not on anybody else&apos;s.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <Field id="recipients" label="People to copy" error={errors.recipients?.message}>
+            <RecipientsField
+              id="recipients"
+              value={(watch('recipients') ?? []) as RequestRecipient[]}
+              onChange={(next) =>
+                setValue('recipients', next, { shouldDirty: true, shouldValidate: true })
+              }
+              disabled={readOnly}
+            />
+          </Field>
         </CardContent>
       </Card>
 

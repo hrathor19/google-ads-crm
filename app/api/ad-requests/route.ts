@@ -145,6 +145,7 @@ export async function POST(req: Request) {
         keywords: body.keywords ?? null,
         notes: body.notes ?? null,
         leadTargets: body.leadTargets,
+        recipients: body.recipients,
       },
       { submit: body.submit, ip: clientIp(req) }
     );
