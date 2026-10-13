@@ -32,6 +32,82 @@ const TRANSIENT_HINTS = [
   'ratelimit', 'internal', 'unavailable', '429', '500', '503',
 ];
 
+/**
+ * What a Gemini failure actually was, in words worth showing somebody.
+ *
+ * The assistant used to answer every one of these with "Something went wrong
+ * on our side", which is both untrue and unactionable: the commonest cause by
+ * far is the free tier's daily cap, where the only useful information is how
+ * long until it resets and that billing removes it.
+ */
+export type GeminiFailure = {
+  kind: 'quota' | 'rate-limit' | 'overloaded' | 'other';
+  /** Safe to show a user: no key, no endpoint, no stack. */
+  message: string;
+  retryAfterSeconds: number | null;
+  /** What the API should answer with. */
+  status: number;
+};
+
+/** "38742" -> "10h 45m". Rounded up, because early is worse than late here. */
+function humanDelay(seconds: number): string {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  const mins = Math.ceil(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rest = mins % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+export function describeGeminiFailure(err: unknown): GeminiFailure {
+  const raw = err instanceof Error ? err.message : String(err);
+  const low = raw.toLowerCase();
+
+  // Google reports this two ways; the machine-readable one wins.
+  const match = /"retrydelay"\s*:\s*"(\d+(?:\.\d+)?)s"/i.exec(raw);
+  const retryAfterSeconds = match ? Math.ceil(Number(match[1])) : null;
+  const when = retryAfterSeconds ? ` It resets in about ${humanDelay(retryAfterSeconds)}.` : '';
+
+  const is429 = low.includes('429') || low.includes('resource_exhausted');
+  const perDay = low.includes('perday') || low.includes('free_tier') || low.includes('free tier');
+
+  if (is429 && perDay) {
+    return {
+      kind: 'quota',
+      message:
+        `The assistant has used up today's allowance of Gemini requests.${when} ` +
+        'The free tier allows only a small number per day — enabling billing on the ' +
+        'Gemini API project removes the cap.',
+      retryAfterSeconds,
+      status: 429,
+    };
+  }
+  if (is429) {
+    return {
+      kind: 'rate-limit',
+      message: `The assistant is being asked questions faster than Gemini allows.${when || ' Try again in a moment.'}`,
+      retryAfterSeconds,
+      status: 429,
+    };
+  }
+  if (low.includes('503') || low.includes('high demand') || low.includes('overloaded') || low.includes('unavailable')) {
+    return {
+      kind: 'overloaded',
+      message:
+        'Gemini is busy and turned the request away. This is on their side and usually ' +
+        'clears within a minute — try again.',
+      retryAfterSeconds,
+      status: 503,
+    };
+  }
+  return {
+    kind: 'other',
+    message: 'The assistant could not reach Gemini. Try again, and tell an administrator if it keeps happening.',
+    retryAfterSeconds: null,
+    status: 502,
+  };
+}
+
 function classify(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
   const name = (err instanceof Error ? err.name : '').toLowerCase();

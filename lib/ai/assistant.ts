@@ -4,7 +4,8 @@ import { env } from '@/lib/env';
 import type { Principal } from '@/lib/rbac/permissions';
 import { canSeeFinancials } from '@/lib/redact';
 import { scopeAccountId } from '@/lib/api';
-import { LLMNotConfiguredError } from './gemini';
+import { LLMNotConfiguredError, describeGeminiFailure } from './gemini';
+import { ApiError } from '@/lib/api';
 import { findTool, toolsFor, type ToolContext, type ToolTrace } from './tools';
 
 /**
@@ -128,10 +129,22 @@ export async function askAssistant(params: {
   const trace: ToolTrace[] = [];
 
   for (let hop = 0; hop < MAX_HOPS; hop++) {
-    const result = await generativeModel.generateContent({
-      contents,
-      generationConfig: { maxOutputTokens: 2048, temperature: 0.2 },
-    });
+    // Gemini's own failures are translated here rather than left to the
+    // generic 500. Answering a spent daily quota with "Something went wrong
+    // on our side" is both untrue and unactionable — the person needs to know
+    // it resets, roughly when, and that billing removes the cap.
+    let result;
+    try {
+      result = await generativeModel.generateContent({
+        contents,
+        generationConfig: { maxOutputTokens: 2048, temperature: 0.2 },
+      });
+    } catch (err) {
+      const failure = describeGeminiFailure(err);
+      // Logged in full for an administrator; only the safe sentence is thrown.
+      console.error('[assistant] gemini call failed', failure.kind, err);
+      throw new ApiError(failure.status, failure.message);
+    }
 
     const calls = result.response.functionCalls() ?? [];
     if (calls.length === 0) {
